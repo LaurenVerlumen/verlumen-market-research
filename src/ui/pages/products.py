@@ -409,15 +409,17 @@ def products_page():
                 ).props("dense flat toggle-color=primary size=sm")
 
             # Persist view toggle in localStorage
-            ui.run_javascript('''
-                const saved = localStorage.getItem("verlumen_view_toggle");
-                if (saved !== null) {
-                    return saved === "true";
-                }
-                return null;
-            ''').then(lambda result: (
-                setattr(view_toggle, 'value', result) if result is not None else None
-            ))
+            async def _load_saved_view():
+                try:
+                    result = await ui.run_javascript(
+                        'localStorage.getItem("verlumen_view_toggle")'
+                    )
+                    if result is not None:
+                        view_toggle.value = result == "true"
+                except RuntimeError:
+                    pass
+
+            ui.timer(0.1, _load_saved_view, once=True)
 
             def _persist_view(e):
                 ui.run_javascript(
