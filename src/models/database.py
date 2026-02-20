@@ -52,6 +52,18 @@ def _migrate_columns():
                 conn.execute(text(
                     "ALTER TABLE amazon_competitors ADD COLUMN reviewed BOOLEAN DEFAULT 0"
                 ))
+        if "brand" not in columns:
+            logger.info("Adding brand column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN brand TEXT"
+                ))
+        if "manufacturer" not in columns:
+            logger.info("Adding manufacturer column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN manufacturer TEXT"
+                ))
 
 
 def _migrate_indexes():

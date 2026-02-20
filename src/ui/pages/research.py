@@ -5,11 +5,12 @@ from datetime import datetime
 from nicegui import ui, app
 from sqlalchemy.orm import joinedload
 
-from config import SERPAPI_KEY, AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
+from config import SERPAPI_KEY, AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, SP_API_REFRESH_TOKEN
 import logging
 
 from src.models import get_session, Category, Product, SearchSession, AmazonCompetitor
 from src.services import AmazonSearchService, AmazonSearchError, CompetitionAnalyzer
+from src.services.sp_api_client import SPAPIClient
 from src.services.query_optimizer import optimize_query
 from src.services.match_scorer import score_matches
 from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src
@@ -455,6 +456,21 @@ def research_page():
                                 if a:
                                     score_by_asin[a] = s.get("match_score")
 
+                            # SP-API brand enrichment (optional)
+                            brand_data: dict[str, dict] = {}
+                            if SP_API_REFRESH_TOKEN:
+                                try:
+                                    status_label.text = f"Enriching brand data ({completed + 1}/{total}): {product.name}"
+                                    sp_client = SPAPIClient()
+                                    unique_asins = list({c.get("asin") for c in all_competitors if c.get("asin")})
+                                    brand_data = await asyncio.get_event_loop().run_in_executor(
+                                        None, sp_client.enrich_asins, unique_asins,
+                                    )
+                                    log_area.push(f"  -> Brand data enriched for {len(brand_data)} ASINs")
+                                except Exception as exc:
+                                    logger.warning("SP-API enrichment failed: %s", exc)
+                                    log_area.push(f"  -> SP-API enrichment skipped: {exc}")
+
                             if results.get("cache_hit"):
                                 cache_hits += 1
                                 log_area.push("  -> (cached result)")
@@ -512,6 +528,8 @@ def research_page():
                                     is_sponsored=comp.get("is_sponsored", False),
                                     position=comp.get("position"),
                                     match_score=score_by_asin.get(asin),
+                                    brand=brand_data.get(asin, {}).get("brand"),
+                                    manufacturer=brand_data.get(asin, {}).get("manufacturer"),
                                 )
                                 db.add(amazon_comp)
 

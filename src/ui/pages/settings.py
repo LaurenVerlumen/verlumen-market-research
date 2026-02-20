@@ -7,11 +7,14 @@ from nicegui import ui
 import config
 from config import (
     BASE_DIR, SERPAPI_KEY,
+    SP_API_REFRESH_TOKEN, SP_API_LWA_APP_ID, SP_API_LWA_CLIENT_SECRET,
+    SP_API_AWS_ACCESS_KEY, SP_API_AWS_SECRET_KEY, SP_API_ROLE_ARN,
     AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENTS,
     save_department_map,
 )
 from src.models import Category, Product, get_session
 from src.services import AmazonSearchService
+from src.services.sp_api_client import SPAPIClient
 from src.ui.layout import build_layout
 
 
@@ -91,6 +94,90 @@ def settings_page():
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=save_key).props("color=primary")
                 ui.button("Validate Key", icon="verified", on_click=validate_key).props("flat color=grey")
+
+        # Amazon SP-API configuration
+        with ui.card().classes("w-full p-4 mb-4"):
+            ui.label("Amazon SP-API Configuration").classes("text-subtitle1 font-bold mb-2")
+            ui.label(
+                "Connect your Amazon Seller account for brand enrichment."
+            ).classes("text-body2 text-secondary mb-3")
+
+            sp_configured = bool(SP_API_REFRESH_TOKEN and SP_API_LWA_APP_ID)
+            with ui.row().classes("items-center gap-2 mb-3"):
+                ui.label("Status:").classes("text-body2 font-medium")
+                if sp_configured:
+                    ui.label("Configured").classes("text-body2 text-positive")
+                    ui.icon("check_circle").classes("text-positive")
+                else:
+                    ui.label("Not configured").classes("text-body2 text-secondary")
+                    ui.icon("warning").classes("text-warning")
+
+            _sp_fields = [
+                ("SP_API_REFRESH_TOKEN", "Refresh Token", SP_API_REFRESH_TOKEN),
+                ("SP_API_LWA_APP_ID", "LWA App ID", SP_API_LWA_APP_ID),
+                ("SP_API_LWA_CLIENT_SECRET", "LWA Client Secret", SP_API_LWA_CLIENT_SECRET),
+                ("SP_API_AWS_ACCESS_KEY", "AWS Access Key", SP_API_AWS_ACCESS_KEY),
+                ("SP_API_AWS_SECRET_KEY", "AWS Secret Key", SP_API_AWS_SECRET_KEY),
+                ("SP_API_ROLE_ARN", "Role ARN", SP_API_ROLE_ARN),
+            ]
+
+            sp_inputs = {}
+            for env_key, label_text, current_val in _sp_fields:
+                with ui.row().classes("items-center gap-2 w-full"):
+                    ui.label(label_text).classes("text-body2 font-medium").style("min-width:150px")
+                    if current_val:
+                        ui.label(_mask_key(current_val)).classes("text-caption text-secondary")
+                    sp_inputs[env_key] = ui.input(
+                        label=label_text,
+                        password=True,
+                        password_toggle_button=True,
+                        value="",
+                        placeholder=f"Enter {label_text}",
+                    ).classes("flex-1")
+
+            sp_validation_label = ui.label("").classes("text-body2 mt-1")
+
+            async def _save_and_validate_sp_api():
+                # Check that at least one field has a value (new or existing)
+                has_any_new = any(sp_inputs[k].value.strip() for k in sp_inputs)
+                if not has_any_new and not sp_configured:
+                    ui.notify("Please fill in at least the required credentials.", type="warning")
+                    return
+
+                # Save each non-empty input to .env and update os.environ / config
+                for env_key, label_text, current_val in _sp_fields:
+                    new_val = sp_inputs[env_key].value.strip()
+                    if new_val:
+                        _update_env_file(env_key, new_val)
+                        os.environ[env_key] = new_val
+                        setattr(config, env_key, new_val)
+
+                sp_validation_label.text = "Saved. Validating..."
+                ui.notify("Credentials saved!", type="positive")
+
+                # Clear inputs after save
+                for inp in sp_inputs.values():
+                    inp.value = ""
+
+                # Validate using SPAPIClient
+                try:
+                    client = SPAPIClient()
+                    loop = asyncio.get_event_loop()
+                    valid = await loop.run_in_executor(None, client.validate_credentials)
+                    if valid:
+                        sp_validation_label.text = "Credentials are valid!"
+                        sp_validation_label.classes("text-positive", remove="text-negative")
+                    else:
+                        sp_validation_label.text = "Validation failed - check your credentials."
+                        sp_validation_label.classes("text-negative", remove="text-positive")
+                except Exception as exc:
+                    sp_validation_label.text = f"Validation error: {exc}"
+                    sp_validation_label.classes("text-negative", remove="text-positive")
+
+            ui.button(
+                "Save & Validate", icon="verified",
+                on_click=_save_and_validate_sp_api,
+            ).props("color=primary").classes("mt-2")
 
         # Database info
         with ui.card().classes("w-full p-4 mb-4"):

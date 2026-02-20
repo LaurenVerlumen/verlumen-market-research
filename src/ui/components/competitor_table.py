@@ -11,6 +11,7 @@ COLUMNS = [
     {"name": "match_score", "label": "Relevance", "field": "match_score_raw", "sortable": True, "align": "center"},
     {"name": "title", "label": "Title", "field": "title", "sortable": True, "align": "left"},
     {"name": "asin", "label": "ASIN", "field": "asin", "sortable": True, "align": "left"},
+    {"name": "brand", "label": "Brand", "field": "brand", "sortable": True, "align": "left"},
     {"name": "price", "label": "Price", "field": "price_raw", "sortable": True, "align": "right"},
     {"name": "rating", "label": "Rating", "field": "rating_raw", "sortable": True, "align": "center"},
     {"name": "review_count", "label": "Reviews", "field": "review_count_raw", "sortable": True, "align": "right"},
@@ -186,7 +187,7 @@ def competitor_table(
             for r in all_rows:
                 # Keyword filter
                 if kw:
-                    text = f"{r['title']} {r['asin']}".lower()
+                    text = f"{r['title']} {r['asin']} {r['brand']}".lower()
                     if not all(k in text for k in kw.split()):
                         continue
                 # Price filter
@@ -485,6 +486,7 @@ def _prepare_rows(competitors: list[dict]) -> list[dict]:
             "match_score_raw": score or 0,
             "title": _truncate(c.get("title", ""), 80),
             "asin": c.get("asin", ""),
+            "brand": c.get("brand") or "-",
             "price_raw": price,
             "rating_raw": rating,
             "review_count_raw": review_count if review_count is not None else 0,

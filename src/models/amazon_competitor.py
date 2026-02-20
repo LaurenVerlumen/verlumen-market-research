@@ -32,6 +32,8 @@ class AmazonCompetitor(Base):
     position: Mapped[int | None] = mapped_column(Integer, nullable=True)
     match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     reviewed: Mapped[bool] = mapped_column(Boolean, default=False)
+    brand: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manufacturer: Mapped[str | None] = mapped_column(Text, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     product = relationship("Product", back_populates="amazon_competitors")

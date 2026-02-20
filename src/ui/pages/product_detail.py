@@ -1,11 +1,12 @@
 """Product detail page - Alibaba info + Amazon competition analysis."""
 import asyncio
+import logging
 import statistics as _stats
 from datetime import datetime
 
 from nicegui import ui
 
-from config import SERPAPI_KEY
+from config import SERPAPI_KEY, SP_API_REFRESH_TOKEN
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
 from src.models.category import Category
 from config import AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
@@ -13,12 +14,16 @@ from src.services import (
     ImageFetcher, download_image, save_uploaded_image,
     AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
 )
+from src.services.sp_api_client import SPAPIClient
 from src.services.match_scorer import score_matches
+from src.services.utils import parse_bought
 from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src, format_price as _format_price
 from src.services.viability_scorer import calculate_vvs
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
+
+logger = logging.getLogger(__name__)
 
 
 def product_detail_page(product_id: int):
@@ -393,6 +398,19 @@ def product_detail_page(product_id: int):
                     # Compute match scores
                     scored = score_matches(product.name, [dict(c) for c in results["competitors"]])
 
+                    # SP-API brand enrichment (optional)
+                    brand_data: dict[str, dict] = {}
+                    if SP_API_REFRESH_TOKEN:
+                        try:
+                            rerun_status.text = "Enriching brand data..."
+                            sp_client = SPAPIClient()
+                            unique_asins = list({c.get("asin") for c in results["competitors"] if c.get("asin")})
+                            brand_data = await asyncio.get_event_loop().run_in_executor(
+                                None, sp_client.enrich_asins, unique_asins,
+                            )
+                        except Exception as exc:
+                            logger.warning("SP-API enrichment failed: %s", exc)
+
                     db = get_session()
                     try:
                         new_session = SearchSession(
@@ -439,6 +457,8 @@ def product_detail_page(product_id: int):
                                 is_sponsored=comp.get("is_sponsored", False),
                                 position=comp.get("position"),
                                 match_score=score_by_asin.get(asin),
+                                brand=brand_data.get(asin, {}).get("brand"),
+                                manufacturer=brand_data.get(asin, {}).get("manufacturer"),
                             )
                             db.add(amazon_comp)
 
@@ -572,6 +592,7 @@ def product_detail_page(product_id: int):
                                 "position": c.position,
                                 "title": c.title,
                                 "asin": c.asin,
+                                "brand": c.brand,
                                 "price": c.price,
                                 "rating": c.rating,
                                 "review_count": c.review_count,
@@ -721,6 +742,9 @@ def product_detail_page(product_id: int):
                             on_pagination_change=lambda p: _saved_pagination.__setitem__(0, p),
                         )
 
+                        # --- Brand Landscape card ---
+                        _render_brand_landscape(comp_data)
+
                     # --- Profit Analysis card ---
                     _render_profit_analysis(product, comps if comps else [])
 
@@ -824,6 +848,160 @@ def _render_vvs_banner(product, comp_data: list[dict], alibaba_cost):
                         ui.label(f"{dim_score}/10").classes("text-caption text-secondary")
                         if dim.get("details"):
                             ui.tooltip(dim["details"])
+
+
+def _render_brand_landscape(comp_data: list[dict]):
+    """Render the Brand Landscape card aggregating competitor brands."""
+    # Aggregate brands from comp_data
+    brand_agg: dict[str, dict] = {}
+    for c in comp_data:
+        brand = c.get("brand") or None
+        if not brand:
+            brand = "Unknown"
+        if brand not in brand_agg:
+            brand_agg[brand] = {
+                "count": 0,
+                "prices": [],
+                "ratings": [],
+                "total_revenue": 0.0,
+            }
+        agg = brand_agg[brand]
+        agg["count"] += 1
+        if c.get("price") is not None:
+            agg["prices"].append(c["price"])
+        if c.get("rating") is not None:
+            agg["ratings"].append(c["rating"])
+        # Revenue estimate: price * bought
+        price = c.get("price")
+        bought = parse_bought(c.get("bought_last_month"))
+        if price is not None and bought is not None and bought > 0:
+            agg["total_revenue"] += price * bought
+
+    if not brand_agg:
+        return
+
+    # Compute total revenue for market share
+    total_revenue = sum(a["total_revenue"] for a in brand_agg.values())
+
+    # Build sorted brand rows (by total revenue desc)
+    brand_rows = []
+    for brand_name, agg in brand_agg.items():
+        avg_price = _stats.mean(agg["prices"]) if agg["prices"] else None
+        avg_rating = _stats.mean(agg["ratings"]) if agg["ratings"] else None
+        market_share = (agg["total_revenue"] / total_revenue * 100) if total_revenue > 0 else 0
+        brand_rows.append({
+            "brand": brand_name,
+            "count": agg["count"],
+            "avg_price": avg_price,
+            "avg_rating": avg_rating,
+            "total_revenue": agg["total_revenue"],
+            "market_share": market_share,
+        })
+
+    brand_rows.sort(key=lambda r: r["total_revenue"], reverse=True)
+
+    with ui.card().classes("w-full p-4 mt-4"):
+        with ui.row().classes("items-center gap-2 mb-3"):
+            ui.icon("business").classes("text-primary")
+            ui.label("Brand Landscape").classes("text-subtitle1 font-bold")
+
+        # High concentration warning
+        if brand_rows and brand_rows[0]["market_share"] > 40:
+            with ui.row().classes("items-center gap-2 mb-3 px-3 py-2").style(
+                "background: #FFF3E0; border-radius: 8px"
+            ):
+                ui.icon("warning").classes("text-warning")
+                ui.label(
+                    f"High brand concentration - \"{brand_rows[0]['brand']}\" holds "
+                    f"{brand_rows[0]['market_share']:.0f}% market share"
+                ).classes("text-body2 text-warning")
+
+        # Brand table
+        brand_columns = [
+            {"name": "brand", "label": "Brand", "field": "brand", "sortable": True, "align": "left"},
+            {"name": "count", "label": "Products", "field": "count", "sortable": True, "align": "center"},
+            {"name": "avg_price", "label": "Avg Price", "field": "avg_price_raw", "sortable": True, "align": "right"},
+            {"name": "avg_rating", "label": "Avg Rating", "field": "avg_rating_raw", "sortable": True, "align": "center"},
+            {"name": "total_revenue", "label": "Est. Revenue/Mo", "field": "total_revenue_raw", "sortable": True, "align": "right"},
+            {"name": "market_share", "label": "Market Share", "field": "market_share_raw", "sortable": True, "align": "right"},
+        ]
+
+        table_rows = []
+        for i, br in enumerate(brand_rows):
+            table_rows.append({
+                "brand": br["brand"],
+                "count": br["count"],
+                "avg_price_raw": br["avg_price"],
+                "avg_rating_raw": br["avg_rating"],
+                "total_revenue_raw": br["total_revenue"],
+                "market_share_raw": br["market_share"],
+                "_is_top": i == 0 and br["market_share"] > 0,
+            })
+
+        brand_table = ui.table(
+            columns=brand_columns,
+            rows=table_rows,
+            row_key="brand",
+            pagination={"rowsPerPage": 10, "sortBy": "total_revenue", "descending": True},
+        ).classes("w-full")
+        brand_table.props("flat bordered dense")
+
+        # Format cells
+        brand_table.add_slot('body-cell-brand', r'''
+            <q-td :props="props">
+                <span :style="props.row._is_top ? 'font-weight:bold; color:#2E7D32' : ''">
+                    {{ props.row.brand }}
+                </span>
+                <q-icon v-if="props.row._is_top" name="emoji_events" size="14px"
+                        style="color:#F9A825; margin-left:4px" />
+            </q-td>
+        ''')
+
+        brand_table.add_slot('body-cell-avg_price', r'''
+            <q-td :props="props">
+                <span v-if="props.row.avg_price_raw != null">
+                    ${{ props.row.avg_price_raw.toFixed(2) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        brand_table.add_slot('body-cell-avg_rating', r'''
+            <q-td :props="props">
+                <span v-if="props.row.avg_rating_raw != null">
+                    {{ props.row.avg_rating_raw.toFixed(1) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        brand_table.add_slot('body-cell-total_revenue', r'''
+            <q-td :props="props">
+                <span v-if="props.row.total_revenue_raw > 0"
+                      :style="{
+                          color: props.row.total_revenue_raw >= 10000 ? '#2e7d32' :
+                                 props.row.total_revenue_raw >= 3000 ? '#f57f17' : '#666',
+                          fontWeight: props.row.total_revenue_raw >= 3000 ? 'bold' : 'normal'
+                      }">
+                    ${{ props.row.total_revenue_raw.toLocaleString(undefined, {maximumFractionDigits: 0}) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        brand_table.add_slot('body-cell-market_share', r'''
+            <q-td :props="props">
+                <span v-if="props.row.market_share_raw > 0"
+                      :style="{
+                          color: props.row.market_share_raw > 40 ? '#c62828' :
+                                 props.row.market_share_raw > 20 ? '#f57f17' : '#666',
+                          fontWeight: props.row.market_share_raw > 20 ? 'bold' : 'normal'
+                      }">
+                    {{ props.row.market_share_raw.toFixed(1) }}%
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
 
 
 def _render_profit_analysis(product, competitors: list):

@@ -25,6 +25,14 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 # SerpAPI
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
+# Amazon SP-API credentials
+SP_API_REFRESH_TOKEN = os.getenv("SP_API_REFRESH_TOKEN", "")
+SP_API_LWA_APP_ID = os.getenv("SP_API_LWA_APP_ID", "")
+SP_API_LWA_CLIENT_SECRET = os.getenv("SP_API_LWA_CLIENT_SECRET", "")
+SP_API_AWS_ACCESS_KEY = os.getenv("SP_API_AWS_ACCESS_KEY", "")
+SP_API_AWS_SECRET_KEY = os.getenv("SP_API_AWS_SECRET_KEY", "")
+SP_API_ROLE_ARN = os.getenv("SP_API_ROLE_ARN", "")
+
 # Amazon settings
 AMAZON_DOMAIN = "amazon.com"
 AMAZON_MARKETPLACE = "US"
