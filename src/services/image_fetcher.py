@@ -82,7 +82,7 @@ class ImageFetcher:
 
         Returns the image URL (original resolution) or None.
         """
-        query = f"{product_name} wooden toy alibaba"
+        query = f"{product_name} product alibaba"
 
         params = {
             "engine": "google_images",

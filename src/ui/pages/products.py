@@ -201,8 +201,21 @@ def products_page():
                     label="Research Status",
                 ).props("outlined dense").classes("w-48")
 
+                profit_filter = ui.select(
+                    ["All", "Has Profit Data", "No Profit Data"],
+                    value="All",
+                    label="Profit Data",
+                ).props("outlined dense").classes("w-48")
+
+                comp_range_filter = ui.select(
+                    ["All", "0", "1-10", "10-50", "50+"],
+                    value="All",
+                    label="Competitors",
+                ).props("outlined dense").classes("w-36")
+
                 sort_select = ui.select(
-                    ["Name (A-Z)", "Name (Z-A)", "Newest first", "Most competitors", "Category"],
+                    ["Name (A-Z)", "Name (Z-A)", "Newest first", "Most competitors",
+                     "Best Opportunity", "Category"],
                     value="Name (A-Z)",
                     label="Sort by",
                 ).props("outlined dense").classes("w-48")
@@ -285,6 +298,108 @@ def products_page():
 
             fetch_btn.on_click(_fetch_all_images)
 
+            # --- Bulk selection state ---
+            bulk_selected: set[int] = set()
+            bulk_checkboxes: dict[int, ui.checkbox] = {}
+
+            # --- Bulk action bar ---
+            bulk_bar = ui.row().classes("w-full items-center gap-3 p-2").style(
+                "background: #f5f0eb; border-left: 4px solid #A08968; display: none"
+            )
+            with bulk_bar:
+                bulk_count_label = ui.label("0 selected").classes("text-subtitle2 font-bold")
+                ui.button(
+                    "Select All Visible", icon="select_all",
+                    on_click=lambda: _bulk_select_all(),
+                ).props("flat dense color=primary size=sm")
+                ui.button(
+                    "Deselect All", icon="deselect",
+                    on_click=lambda: _bulk_deselect_all(),
+                ).props("flat dense color=grey size=sm")
+                ui.space()
+                bulk_research_btn = ui.button(
+                    "Research Selected", icon="search",
+                ).props("color=positive size=sm")
+                bulk_delete_btn = ui.button(
+                    "Delete Selected", icon="delete",
+                ).props("color=negative size=sm outline")
+
+            def _update_bulk_bar():
+                count = len(bulk_selected)
+                bulk_count_label.text = f"{count} selected"
+                bulk_bar.style(
+                    "background: #f5f0eb; border-left: 4px solid #A08968; "
+                    + ("display: flex" if count > 0 else "display: none")
+                )
+
+            def _bulk_select_all():
+                db = get_session()
+                try:
+                    products = _get_filtered_products(db)
+                    for p in products:
+                        bulk_selected.add(p.id)
+                        if p.id in bulk_checkboxes:
+                            bulk_checkboxes[p.id].value = True
+                finally:
+                    db.close()
+                _update_bulk_bar()
+
+            def _bulk_deselect_all():
+                for pid in list(bulk_selected):
+                    if pid in bulk_checkboxes:
+                        bulk_checkboxes[pid].value = False
+                bulk_selected.clear()
+                _update_bulk_bar()
+
+            def _on_bulk_checkbox(pid: int, checked: bool):
+                if checked:
+                    bulk_selected.add(pid)
+                else:
+                    bulk_selected.discard(pid)
+                _update_bulk_bar()
+
+            def _bulk_research():
+                if not bulk_selected:
+                    ui.notify("No products selected.", type="warning")
+                    return
+                ids_param = ",".join(str(i) for i in bulk_selected)
+                ui.navigate.to(f"/research?ids={ids_param}")
+
+            def _bulk_delete():
+                if not bulk_selected:
+                    return
+
+                def confirm():
+                    db = get_session()
+                    try:
+                        for pid in list(bulk_selected):
+                            prod = db.query(Product).filter(Product.id == pid).first()
+                            if prod:
+                                db.delete(prod)
+                        db.commit()
+                    finally:
+                        db.close()
+                    bulk_selected.clear()
+                    _update_bulk_bar()
+                    dialog.close()
+                    refresh_products()
+
+                with ui.dialog() as dialog, ui.card():
+                    ui.label(f"Delete {len(bulk_selected)} products?").classes(
+                        "text-subtitle1 font-bold"
+                    )
+                    ui.label(
+                        "This will permanently delete the selected products "
+                        "and all their research data."
+                    ).classes("text-body2 text-secondary")
+                    with ui.row().classes("justify-end gap-2 mt-4"):
+                        ui.button("Cancel", on_click=dialog.close).props("flat")
+                        ui.button("Delete All", on_click=confirm).props("color=negative")
+                dialog.open()
+
+            bulk_research_btn.on_click(_bulk_research)
+            bulk_delete_btn.on_click(_bulk_delete)
+
             # --- Count label + view toggle ---
             with ui.row().classes("w-full items-center justify-between"):
                 count_label = ui.label("").classes("text-body2 text-secondary")
@@ -292,6 +407,24 @@ def products_page():
                     {False: "Grid", True: "Table"},
                     value=False,
                 ).props("dense flat toggle-color=primary size=sm")
+
+            # Persist view toggle in localStorage
+            ui.run_javascript('''
+                const saved = localStorage.getItem("verlumen_view_toggle");
+                if (saved !== null) {
+                    return saved === "true";
+                }
+                return null;
+            ''').then(lambda result: (
+                setattr(view_toggle, 'value', result) if result is not None else None
+            ))
+
+            def _persist_view(e):
+                ui.run_javascript(
+                    f'localStorage.setItem("verlumen_view_toggle", "{str(view_toggle.value).lower()}")'
+                )
+
+            view_toggle.on_value_change(_persist_view)
 
             # --- Product container ---
             product_container = ui.column().classes("w-full gap-2")
@@ -309,6 +442,12 @@ def products_page():
                     if cat:
                         query = query.filter(Product.category_id == cat.id)
 
+                # Profit data filter (at DB level)
+                if profit_filter.value == "Has Profit Data":
+                    query = query.filter(Product.alibaba_price_min.isnot(None))
+                elif profit_filter.value == "No Profit Data":
+                    query = query.filter(Product.alibaba_price_min.is_(None))
+
                 products = query.all()
 
                 # Search filter (name substring, case-insensitive)
@@ -321,6 +460,21 @@ def products_page():
                     products = [p for p in products if len(p.search_sessions) > 0]
                 elif status_select.value == "Pending":
                     products = [p for p in products if len(p.search_sessions) == 0]
+
+                # Competitor count range filter
+                comp_val = comp_range_filter.value
+                if comp_val != "All":
+                    def _comp_count(p):
+                        return db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
+
+                    if comp_val == "0":
+                        products = [p for p in products if _comp_count(p) == 0]
+                    elif comp_val == "1-10":
+                        products = [p for p in products if 1 <= _comp_count(p) <= 10]
+                    elif comp_val == "10-50":
+                        products = [p for p in products if 10 < _comp_count(p) <= 50]
+                    elif comp_val == "50+":
+                        products = [p for p in products if _comp_count(p) > 50]
 
                 # Sort
                 sort_val = sort_select.value
@@ -335,6 +489,15 @@ def products_page():
                         key=lambda p: db.query(AmazonCompetitor).filter_by(product_id=p.id).count(),
                         reverse=True,
                     )
+                elif sort_val == "Best Opportunity":
+                    def _opp_score(p):
+                        if p.search_sessions:
+                            latest = p.search_sessions[-1]
+                            # Use avg_rating as proxy; higher opportunity if lower competition
+                            # We compute a simple score from the latest session data
+                            return -(latest.avg_reviews or 0)  # Lower avg reviews = better opportunity
+                        return 0
+                    products.sort(key=_opp_score)
                 elif sort_val == "Category":
                     products.sort(key=lambda p: (p.category.name if p.category else "", p.name.lower()))
 
@@ -344,77 +507,86 @@ def products_page():
                 """Render a single product as a card in the grid."""
                 is_researched = session_count > 0
 
-                with ui.card().classes("w-full p-4 cursor-pointer").on(
-                    "click",
-                    lambda _, pid=p.id: ui.navigate.to(f"/products/{pid}"),
-                ):
-                    # Top row: thumbnail + name + link
+                with ui.card().classes("w-full p-4"):
+                    # Bulk checkbox row
                     with ui.row().classes("items-start w-full gap-3"):
-                        # Thumbnail / avatar
-                        img_src = _product_image_src(p)
-                        if img_src:
-                            ui.image(img_src).classes(
-                                "w-16 h-16 rounded object-cover"
-                            ).style("min-width:64px")
-                        else:
-                            letter = p.name[0].upper() if p.name else "?"
-                            bg = _avatar_color(p.name)
-                            ui.avatar(
-                                letter, color=bg, text_color="white", size="64px",
-                            )
-
-                        with ui.column().classes("flex-1 gap-1"):
-                            ui.label(p.name).classes("text-subtitle1 font-bold")
-                            if p.alibaba_supplier:
-                                ui.label(f"Supplier: {p.alibaba_supplier}").classes(
-                                    "text-caption text-secondary"
-                                )
-                            with ui.row().classes("gap-2 items-center flex-wrap"):
-                                ui.badge(
-                                    p.category.name if p.category else "",
-                                    color="blue-2",
-                                ).props("outline")
-                                if is_researched:
-                                    ui.badge("Researched", color="positive")
-                                else:
-                                    ui.badge("Pending", color="grey-5")
-
-                        # Alibaba link (stop propagation so card click doesn't fire)
-                        if p.alibaba_url:
-                            with ui.link(
-                                target=p.alibaba_url, new_tab=True,
-                            ).classes("no-underline").on(
-                                "click.stop", lambda e: None,
-                            ):
-                                ui.button(icon="open_in_new").props(
-                                    "flat round dense color=primary size=sm"
-                                ).tooltip("Open on Alibaba")
-
-                    # Stats row
-                    with ui.row().classes("w-full gap-4 mt-2 items-center"):
-                        ui.label(
-                            f"{comp_count} competitor{'s' if comp_count != 1 else ''}"
-                        ).classes("text-caption text-secondary")
-
-                        if is_researched:
-                            latest = p.search_sessions[-1]
-                            if latest.avg_price is not None:
-                                ui.label(f"Avg ${latest.avg_price:.2f}").classes(
-                                    "text-caption text-positive"
-                                )
-                            if latest.avg_rating is not None:
-                                ui.label(f"Rating {latest.avg_rating:.1f}").classes(
-                                    "text-caption text-secondary"
-                                )
-
-                        price = _format_price(p.alibaba_price_min, p.alibaba_price_max)
-                        if price != "-":
-                            ui.label(price).classes("text-caption text-positive")
-
-                        ui.space()
-                        # Delete button (stop card click propagation)
                         with ui.element("div").on("click.stop", lambda e: None):
-                            _delete_button(p.id, p.name, refresh_products)
+                            cb = ui.checkbox(
+                                value=p.id in bulk_selected,
+                                on_change=lambda e, pid=p.id: _on_bulk_checkbox(pid, e.value),
+                            )
+                            bulk_checkboxes[p.id] = cb
+
+                        # Clickable area for navigation
+                        with ui.column().classes("flex-1 gap-2 cursor-pointer").on(
+                            "click",
+                            lambda _, pid=p.id: ui.navigate.to(f"/products/{pid}"),
+                        ):
+                            # Top row: thumbnail + name + link
+                            with ui.row().classes("items-start w-full gap-3"):
+                                # Thumbnail / avatar
+                                img_src = _product_image_src(p)
+                                if img_src:
+                                    ui.image(img_src).classes(
+                                        "w-16 h-16 rounded object-cover"
+                                    ).style("min-width:64px")
+                                else:
+                                    letter = p.name[0].upper() if p.name else "?"
+                                    bg = _avatar_color(p.name)
+                                    ui.avatar(
+                                        letter, color=bg, text_color="white", size="64px",
+                                    )
+
+                                with ui.column().classes("flex-1 gap-1"):
+                                    ui.label(p.name).classes("text-subtitle1 font-bold")
+                                    if p.alibaba_supplier:
+                                        ui.label(f"Supplier: {p.alibaba_supplier}").classes(
+                                            "text-caption text-secondary"
+                                        )
+                                    with ui.row().classes("gap-2 items-center flex-wrap"):
+                                        ui.badge(
+                                            p.category.name if p.category else "",
+                                            color="blue-2",
+                                        ).props("outline")
+                                        if is_researched:
+                                            ui.badge("Researched", color="positive")
+                                        else:
+                                            ui.badge("Pending", color="grey-5")
+
+                            # Stats row
+                            with ui.row().classes("w-full gap-4 items-center"):
+                                ui.label(
+                                    f"{comp_count} competitor{'s' if comp_count != 1 else ''}"
+                                ).classes("text-caption text-secondary")
+
+                                if is_researched:
+                                    latest = p.search_sessions[-1]
+                                    if latest.avg_price is not None:
+                                        ui.label(f"Avg ${latest.avg_price:.2f}").classes(
+                                            "text-caption text-positive"
+                                        )
+                                    if latest.avg_rating is not None:
+                                        ui.label(f"Rating {latest.avg_rating:.1f}").classes(
+                                            "text-caption text-secondary"
+                                        )
+
+                                price = _format_price(p.alibaba_price_min, p.alibaba_price_max)
+                                if price != "-":
+                                    ui.label(price).classes("text-caption text-positive")
+
+                        # Actions column
+                        with ui.column().classes("gap-1"):
+                            if p.alibaba_url:
+                                with ui.link(
+                                    target=p.alibaba_url, new_tab=True,
+                                ).classes("no-underline").on(
+                                    "click.stop", lambda e: None,
+                                ):
+                                    ui.button(icon="open_in_new").props(
+                                        "flat round dense color=primary size=sm"
+                                    ).tooltip("Open on Alibaba")
+                            with ui.element("div").on("click.stop", lambda e: None):
+                                _delete_button(p.id, p.name, refresh_products)
 
             def _render_product_row(p, comp_count, session_count, db):
                 """Render a single product as a row in the table view."""
@@ -423,6 +595,13 @@ def products_page():
 
                 with ui.card().classes("w-full p-3"):
                     with ui.row().classes("items-center w-full gap-4"):
+                        # Bulk checkbox
+                        cb = ui.checkbox(
+                            value=p.id in bulk_selected,
+                            on_change=lambda e, pid=p.id: _on_bulk_checkbox(pid, e.value),
+                        )
+                        bulk_checkboxes[p.id] = cb
+
                         with ui.row().classes(
                             "items-center flex-1 gap-4 cursor-pointer"
                         ).on(
@@ -481,6 +660,7 @@ def products_page():
                         _delete_button(p.id, p.name, refresh_products)
 
             def refresh_products():
+                bulk_checkboxes.clear()
                 product_container.clear()
                 db = get_session()
                 try:
@@ -519,6 +699,8 @@ def products_page():
             search_input.on("input", lambda _: refresh_products())
             filter_select.on_value_change(lambda _: refresh_products())
             status_select.on_value_change(lambda _: refresh_products())
+            profit_filter.on_value_change(lambda _: refresh_products())
+            comp_range_filter.on_value_change(lambda _: refresh_products())
             sort_select.on_value_change(lambda _: refresh_products())
             view_toggle.on_value_change(lambda _: refresh_products())
 

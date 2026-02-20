@@ -47,21 +47,78 @@ def dashboard_page():
             competitor_count = session.query(AmazonCompetitor).count()
             search_count = session.query(SearchSession).count()
 
-            # Avg opportunity: average of avg_price across search sessions
-            avg_opp_row = (
-                session.query(func.avg(SearchSession.avg_price))
-                .filter(SearchSession.avg_price.isnot(None))
-                .scalar()
-            )
-            avg_opportunity = round(avg_opp_row, 2) if avg_opp_row else None
+            # Avg opportunity: average opportunity_score from the latest
+            # search session per product (computed by CompetitionAnalyzer).
+            # We approximate via the inverse-competition heuristic stored in
+            # SearchSession: lower avg_reviews + lower competition = higher
+            # opportunity.  Since the session doesn't store opportunity_score
+            # directly, we use avg_price as a rough proxy only when no
+            # better metric is available.  TODO: persist opportunity_score.
+            from src.services.competition_analyzer import CompetitionAnalyzer as _CA
+            _analyzer = _CA()
 
-            # Market size: sum of all competitor prices (estimated monthly revenue proxy)
-            market_size_row = (
-                session.query(func.sum(AmazonCompetitor.price))
-                .filter(AmazonCompetitor.price.isnot(None))
-                .scalar()
+            # Gather latest session per product for opportunity calc
+            from sqlalchemy import distinct
+            latest_sessions = (
+                session.query(SearchSession)
+                .order_by(SearchSession.product_id, SearchSession.created_at.desc())
+                .all()
             )
-            market_size = round(market_size_row, 0) if market_size_row else None
+            _seen_products: set[int] = set()
+            _opp_scores: list[float] = []
+            for ls in latest_sessions:
+                if ls.product_id in _seen_products:
+                    continue
+                _seen_products.add(ls.product_id)
+                comps = (
+                    session.query(AmazonCompetitor)
+                    .filter(AmazonCompetitor.search_session_id == ls.id)
+                    .all()
+                )
+                if comps:
+                    comp_dicts = [
+                        {
+                            "price": c.price, "rating": c.rating,
+                            "review_count": c.review_count,
+                            "is_prime": c.is_prime, "badge": c.badge,
+                            "bought_last_month": c.bought_last_month,
+                        }
+                        for c in comps
+                    ]
+                    analysis = _analyzer.analyze(comp_dicts)
+                    _opp_scores.append(analysis["opportunity_score"])
+            avg_opportunity = round(sum(_opp_scores) / len(_opp_scores), 1) if _opp_scores else None
+
+            # Market size: sum(price * bought_last_month) for competitors
+            # that have both values.  bought_last_month is stored as text
+            # (e.g. "1K+"), so we parse it into an integer estimate.
+            import re as _re
+
+            def _parse_bought(raw) -> int:
+                """Parse bought_last_month text like '1K+' or '500' into int."""
+                if not raw:
+                    return 0
+                raw = str(raw).strip().lower().replace(",", "").rstrip("+")
+                if raw.endswith("k"):
+                    try:
+                        return int(float(raw[:-1]) * 1000)
+                    except ValueError:
+                        return 0
+                try:
+                    return int(float(raw))
+                except ValueError:
+                    return 0
+
+            market_size_total = 0.0
+            for c_row in (
+                session.query(AmazonCompetitor.price, AmazonCompetitor.bought_last_month)
+                .filter(AmazonCompetitor.price.isnot(None))
+                .all()
+            ):
+                bought = _parse_bought(c_row[1])
+                if bought > 0:
+                    market_size_total += c_row[0] * bought
+            market_size = round(market_size_total, 0) if market_size_total > 0 else None
 
             # Prices for histogram
             prices = [
@@ -126,7 +183,7 @@ def dashboard_page():
             stats_card("Competitors", str(competitor_count), icon="groups", color="positive")
             stats_card("Searches", str(search_count), icon="search", color="secondary")
             if avg_opportunity is not None:
-                stats_card("Avg Price", f"${avg_opportunity}", icon="trending_up", color="warning")
+                stats_card("Avg Opportunity", f"{avg_opportunity}/100", icon="trending_up", color="warning")
             if market_size is not None:
                 stats_card("Market Size", f"${market_size:,.0f}", icon="attach_money", color="positive")
 

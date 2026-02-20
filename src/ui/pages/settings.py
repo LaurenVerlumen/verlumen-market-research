@@ -3,7 +3,10 @@ import os
 
 from nicegui import ui
 
-from config import BASE_DIR, SERPAPI_KEY
+from config import (
+    BASE_DIR, SERPAPI_KEY,
+    AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENTS,
+)
 from src.models import Category, Product, get_session
 from src.services import AmazonSearchService
 from src.ui.layout import build_layout
@@ -103,6 +106,117 @@ def settings_page():
             ui.button("Recreate Tables", icon="refresh", on_click=reset_db).props(
                 "flat color=grey"
             ).classes("mt-2")
+
+        # Search Cache stats
+        with ui.card().classes("w-full p-4 mb-4"):
+            ui.label("Search Cache").classes("text-subtitle1 font-bold mb-2")
+            ui.label(
+                "Amazon search results are cached for 24 hours to reduce API usage."
+            ).classes("text-body2 text-secondary mb-3")
+
+            cache_stats_container = ui.column().classes("w-full")
+
+            def refresh_cache_stats():
+                cache_stats_container.clear()
+                try:
+                    from src.services.search_cache import SearchCache
+                    cache = SearchCache()
+                    stats = cache.get_stats()
+                    with cache_stats_container:
+                        with ui.row().classes("gap-6"):
+                            ui.label(f"Total entries: {stats['total_entries']}").classes(
+                                "text-body2 text-secondary"
+                            )
+                            ui.label(f"Active: {stats['active_entries']}").classes(
+                                "text-body2 text-positive"
+                            )
+                            ui.label(f"Expired: {stats['expired_entries']}").classes(
+                                "text-body2 text-warning"
+                            )
+                            ui.label(f"Total cache hits: {stats['total_hits']}").classes(
+                                "text-body2 text-secondary"
+                            )
+                except Exception:
+                    with cache_stats_container:
+                        ui.label("Cache not available.").classes("text-body2 text-secondary")
+
+            def clear_expired():
+                try:
+                    from src.services.search_cache import SearchCache
+                    cache = SearchCache()
+                    cleared = cache.clear_expired_cache()
+                    ui.notify(f"Cleared {cleared} expired cache entries.", type="positive")
+                    refresh_cache_stats()
+                except Exception as e:
+                    ui.notify(f"Error: {e}", type="negative")
+
+            refresh_cache_stats()
+
+            ui.button(
+                "Clear Expired Cache", icon="cleaning_services", on_click=clear_expired,
+            ).props("flat color=grey").classes("mt-2")
+
+        # Amazon Department Mapping
+        with ui.card().classes("w-full p-4 mb-4"):
+            ui.label("Amazon Department Mapping").classes("text-subtitle1 font-bold mb-2")
+            ui.label(
+                "Map your product categories to Amazon departments. "
+                "This filters search results to the correct department for better relevance."
+            ).classes("text-body2 text-secondary mb-3")
+
+            dept_container = ui.column().classes("w-full")
+
+            # Build inverted dept options for the dropdowns
+            dept_options = {v: k for k, v in AMAZON_DEPARTMENTS.items()}
+
+            def _refresh_dept_mapping():
+                dept_container.clear()
+                session_d = get_session()
+                try:
+                    categories = session_d.query(Category).order_by(Category.name).all()
+                    with dept_container:
+                        if not categories:
+                            ui.label("No categories found. Import products first.").classes(
+                                "text-body2 text-secondary"
+                            )
+                            return
+
+                        ui.label(
+                            f"Default department: {AMAZON_DEPARTMENTS.get(AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENT_DEFAULT)}"
+                        ).classes("text-caption text-secondary mb-2")
+
+                        for cat in categories:
+                            cat_lower = cat.name.lower()
+                            current_dept = AMAZON_DEPARTMENT_MAP.get(
+                                cat_lower, AMAZON_DEPARTMENT_DEFAULT
+                            )
+                            current_label = AMAZON_DEPARTMENTS.get(current_dept, current_dept)
+
+                            with ui.row().classes("items-center gap-3 w-full py-1"):
+                                ui.label(cat.name).classes("text-body2 font-medium").style(
+                                    "min-width:200px"
+                                )
+                                ui.icon("arrow_forward").classes("text-grey-5")
+
+                                def _make_handler(cname):
+                                    def _on_change(e):
+                                        new_dept = dept_options.get(e.value, e.value)
+                                        AMAZON_DEPARTMENT_MAP[cname.lower()] = new_dept
+                                        ui.notify(
+                                            f"Mapped '{cname}' -> {e.value}",
+                                            type="positive",
+                                        )
+                                    return _on_change
+
+                                dept_select = ui.select(
+                                    options=list(AMAZON_DEPARTMENTS.values()),
+                                    value=current_label,
+                                    on_change=_make_handler(cat.name),
+                                ).props("outlined dense").classes("w-48")
+                finally:
+                    session_d.close()
+
+            _refresh_dept_mapping()
 
         # Category Management
         with ui.card().classes("w-full p-4 mb-4"):

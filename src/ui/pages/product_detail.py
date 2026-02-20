@@ -6,10 +6,12 @@ from nicegui import ui
 
 from config import SERPAPI_KEY
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
+from config import AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
 from src.services import (
     ImageFetcher, download_image, save_uploaded_image,
     AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
 )
+from src.services.match_scorer import score_matches
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
@@ -328,6 +330,14 @@ def product_detail_page(product_id: int):
                                 ).props("color=accent")
 
             # --- Feature 3: Re-research button helper ---
+            def _get_department_for_product(prod):
+                """Resolve Amazon department from product's category."""
+                if prod.category:
+                    cat_lower = prod.category.name.lower()
+                    if cat_lower in AMAZON_DEPARTMENT_MAP:
+                        return AMAZON_DEPARTMENT_MAP[cat_lower]
+                return AMAZON_DEPARTMENT_DEFAULT
+
             async def _rerun_research(pid=product.id):
                 """Run Amazon search + analysis for this single product."""
                 if not SERPAPI_KEY:
@@ -341,12 +351,19 @@ def product_detail_page(product_id: int):
                 analyzer = CompetitionAnalyzer()
 
                 query = search_query_input.value.strip() or product.name
+                dept = _get_department_for_product(product)
 
                 try:
                     results = await asyncio.get_event_loop().run_in_executor(
-                        None, search_service.search_products, query,
+                        None,
+                        lambda: search_service.search_products(
+                            query, amazon_department=dept,
+                        ),
                     )
                     analysis = analyzer.analyze(results["competitors"])
+
+                    # Compute match scores
+                    scored = score_matches(product.name, [dict(c) for c in results["competitors"]])
 
                     db = get_session()
                     try:
@@ -354,7 +371,7 @@ def product_detail_page(product_id: int):
                             product_id=pid,
                             search_query=query,
                             amazon_domain="amazon.com",
-                            total_results=results["total_organic"] + results["total_sponsored"],
+                            total_results=results.get("total_results_across_pages", len(results["competitors"])),
                             organic_results=results["total_organic"],
                             sponsored_results=results["total_sponsored"],
                             avg_price=analysis["price_mean"],
@@ -364,11 +381,24 @@ def product_detail_page(product_id: int):
                         db.add(new_session)
                         db.flush()
 
+                        seen_asins: set[str] = set()
+                        # Build score lookup
+                        score_by_asin = {}
+                        for s in scored:
+                            a = s.get("asin")
+                            if a:
+                                score_by_asin[a] = s.get("match_score")
+
                         for comp in results["competitors"]:
+                            asin = comp.get("asin", "")
+                            if asin and asin in seen_asins:
+                                continue
+                            if asin:
+                                seen_asins.add(asin)
                             amazon_comp = AmazonCompetitor(
                                 product_id=pid,
                                 search_session_id=new_session.id,
-                                asin=comp.get("asin", ""),
+                                asin=asin,
                                 title=comp.get("title"),
                                 price=comp.get("price"),
                                 rating=comp.get("rating"),
@@ -380,6 +410,7 @@ def product_detail_page(product_id: int):
                                 amazon_url=comp.get("amazon_url"),
                                 is_sponsored=comp.get("is_sponsored", False),
                                 position=comp.get("position"),
+                                match_score=score_by_asin.get(asin),
                             )
                             db.add(amazon_comp)
 
@@ -387,8 +418,9 @@ def product_detail_page(product_id: int):
                     finally:
                         db.close()
 
+                    dept_label = f" (dept: {dept})" if dept else ""
                     ui.notify(
-                        f"Research complete! Found {results['total_organic']} organic results.",
+                        f"Research complete! Found {len(results['competitors'])} competitors{dept_label}.",
                         type="positive",
                     )
                     ui.navigate.to(f"/products/{pid}")
@@ -483,16 +515,148 @@ def product_detail_page(product_id: int):
                         "is_sponsored": c.is_sponsored,
                         "amazon_url": c.amazon_url,
                         "thumbnail_url": c.thumbnail_url,
+                        "match_score": c.match_score,
                     }
                     for c in competitors
                 ]
-                competitor_table(comp_data)
+
+                # Relevance filter slider
+                has_scores = any(c.get("match_score") for c in comp_data)
+                relevance_container = ui.column().classes("w-full")
+
+                if has_scores:
+                    with ui.row().classes("w-full items-center gap-4 mb-2"):
+                        ui.label("Min Relevance:").classes("text-body2 font-medium")
+                        relevance_slider = ui.slider(
+                            min=0, max=100, value=10, step=5,
+                        ).props("label-always").classes("flex-1")
+                        relevance_value_label = ui.label("10").classes("text-body2 w-8")
+
+                    def _refresh_table():
+                        val = int(relevance_slider.value)
+                        relevance_value_label.text = str(val)
+                        relevance_container.clear()
+                        with relevance_container:
+                            competitor_table(comp_data, min_relevance=val)
+
+                    relevance_slider.on("update:model-value", lambda _: _refresh_table())
+                    # Initial render with default threshold
+                    with relevance_container:
+                        competitor_table(comp_data, min_relevance=10)
+                else:
+                    with relevance_container:
+                        competitor_table(comp_data)
+
+            # --- Profit Analysis card ---
+            _render_profit_analysis(product, competitors if competitors else [])
 
             # --- Feature 4: AI Insights card ---
             _render_ai_insights(product, competitors if competitors else [])
 
         finally:
             session.close()
+
+
+def _render_profit_analysis(product, competitors: list):
+    """Render the Profit Analysis card if alibaba prices are set."""
+    if product.alibaba_price_min is None:
+        return
+
+    try:
+        from src.services.profit_calculator import calculate_profit
+    except ImportError:
+        return
+
+    if not competitors:
+        return
+
+    comp_data = []
+    for c in competitors:
+        if isinstance(c, dict):
+            comp_data.append(c)
+        else:
+            try:
+                comp_data.append({
+                    "price": c.price,
+                    "bought_last_month": c.bought_last_month,
+                })
+            except Exception:
+                continue
+
+    try:
+        profit = calculate_profit(
+            alibaba_price_min=product.alibaba_price_min,
+            alibaba_price_max=product.alibaba_price_max or product.alibaba_price_min,
+            amazon_competitors=comp_data,
+        )
+    except Exception:
+        return
+
+    strategies = profit.get("strategies") or {}
+    if not strategies:
+        return
+
+    with ui.card().classes("w-full p-4 mt-4"):
+        with ui.row().classes("items-center gap-2 mb-3"):
+            ui.icon("account_balance").classes("text-primary")
+            ui.label("Profit Analysis").classes("text-subtitle1 font-bold")
+
+        # Landed cost
+        ui.label(
+            f"Landed Cost: ${profit.get('landed_cost', 0):.2f}/unit"
+        ).classes("text-body2 text-secondary mb-2")
+
+        # Strategy cards
+        with ui.row().classes("gap-4 flex-wrap mb-4"):
+            strategy_labels = {
+                "budget": ("Budget", "#4DB6AC"),
+                "competitive": ("Competitive", "#A08968"),
+                "premium": ("Premium", "#9575CD"),
+            }
+            for key in ("budget", "competitive", "premium"):
+                s = strategies.get(key)
+                if not s:
+                    continue
+                label, color = strategy_labels[key]
+                be = profit.get("break_even_units", {}).get(key, 0)
+                monthly = profit.get("monthly_profit_estimate", {}).get(key, {})
+
+                with ui.card().classes("p-3").style(
+                    f"min-width:200px; border-left: 4px solid {color}"
+                ):
+                    ui.label(label).classes("text-caption font-bold text-uppercase")
+                    ui.label(
+                        f"${s['selling_price']:.2f}"
+                    ).classes("text-h6 font-bold").style(f"color: {color}")
+
+                    margin = s.get("profit_margin_pct", 0)
+                    margin_color = (
+                        "#006100" if margin > 30
+                        else "#9C5700" if margin >= 15
+                        else "#9C0006"
+                    )
+
+                    with ui.column().classes("gap-1 mt-2"):
+                        ui.label(
+                            f"Profit/unit: ${s['net_profit']:.2f}"
+                        ).classes("text-caption")
+                        ui.label(
+                            f"Margin: {margin:.1f}%"
+                        ).classes("text-caption font-bold").style(
+                            f"color: {margin_color}"
+                        )
+                        ui.label(
+                            f"ROI: {s.get('roi_pct', 0):.1f}%"
+                        ).classes("text-caption")
+                        if be > 0:
+                            ui.label(
+                                f"Break-even: {be} units"
+                            ).classes("text-caption text-secondary")
+                        est_monthly = monthly.get("monthly_profit", 0)
+                        if est_monthly > 0:
+                            ui.label(
+                                f"Est. monthly: ${est_monthly:,.0f}"
+                            ).classes("text-caption text-secondary")
 
 
 def _render_ai_insights(product, competitors: list):
@@ -509,17 +673,20 @@ def _render_ai_insights(product, competitors: list):
 
     comp_data = []
     for c in competitors:
-        if hasattr(c, "asin"):
-            comp_data.append({
-                "asin": c.asin, "title": c.title, "price": c.price,
-                "rating": c.rating, "review_count": c.review_count,
-                "bought_last_month": c.bought_last_month,
-                "badge": c.badge, "is_prime": c.is_prime,
-                "is_sponsored": c.is_sponsored,
-            })
-        elif isinstance(c, dict):
-            comp_data = competitors
-            break
+        if isinstance(c, dict):
+            comp_data.append(c)
+        else:
+            # ORM object -> dict
+            try:
+                comp_data.append({
+                    "asin": c.asin, "title": c.title, "price": c.price,
+                    "rating": c.rating, "review_count": c.review_count,
+                    "bought_last_month": c.bought_last_month,
+                    "badge": c.badge, "is_prime": c.is_prime,
+                    "is_sponsored": c.is_sponsored,
+                })
+            except Exception:
+                continue
 
     try:
         match_results = score_matches(product.name, comp_data)

@@ -43,11 +43,45 @@ def export_page():
             ui.label("Export Summary").classes("text-subtitle1 font-bold mb-2")
             ui.label(f"Total products: {total_products}").classes("text-body2")
             ui.label(f"Products with research data: {researched}").classes("text-body2")
-            if researched < total_products:
+            unresearched = total_products - researched
+            if unresearched > 0:
                 ui.label(
-                    f"{total_products - researched} products have not been researched yet. "
-                    "They will be included with empty competition data."
+                    f"{unresearched} product(s) not yet researched -- "
+                    "they will appear as 'Not researched' in the export."
                 ).classes("text-body2 text-warning")
+
+            ui.separator().classes("my-2")
+
+            # Export options
+            ui.label("Export Options").classes("text-subtitle2 font-medium mb-1")
+
+            include_ml_cb = ui.checkbox(
+                "Include ML Analysis",
+                value=True,
+            ).tooltip("Adds Match Score, Price Strategy, Demand Level columns and AI Recommendations sheet")
+
+            include_profit_cb = ui.checkbox(
+                "Include Profit Analysis",
+                value=True,
+            ).tooltip("Adds Profit Analysis sheet with margins, ROI, and break-even calculations")
+
+            # Sheets summary
+            sheets_label = ui.label("").classes("text-caption text-secondary mt-1")
+
+            def _update_sheets_label():
+                sheets = ["Summary", "Detailed Competitors", "Category Analysis"]
+                if include_profit_cb.value:
+                    sheets.append("Profit Analysis")
+                if include_ml_cb.value:
+                    sheets.append("AI Recommendations")
+                sheets_label.text = (
+                    f"Exporting {total_products} products across {len(sheets)} sheets: "
+                    + ", ".join(sheets)
+                )
+
+            _update_sheets_label()
+            include_ml_cb.on_value_change(lambda _: _update_sheets_label())
+            include_profit_cb.on_value_change(lambda _: _update_sheets_label())
 
         filename_input = ui.input(
             label="Output filename",
@@ -63,6 +97,9 @@ def export_page():
 
             output_path = EXPORTS_DIR / filename
             result_container.clear()
+
+            do_ml = include_ml_cb.value
+            do_profit = include_profit_cb.value
 
             session = get_session()
             try:
@@ -104,7 +141,7 @@ def export_page():
                         ]
                         analysis = analyzer.analyze(competitors_raw)
 
-                    products_data.append({
+                    entry = {
                         "category": p.category.name if p.category else "Uncategorized",
                         "name": p.name,
                         "alibaba_url": p.alibaba_url,
@@ -112,10 +149,29 @@ def export_page():
                         "alibaba_price_max": p.alibaba_price_max,
                         "analysis": analysis,
                         "competitors": competitors_raw,
-                    })
+                    }
+
+                    # ML data
+                    if do_ml and competitors_raw:
+                        entry["ml_data"] = _compute_ml_data(
+                            p.name, competitors_raw, p.alibaba_price_min, p.alibaba_price_max,
+                        )
+
+                    # Profit data
+                    if do_profit and competitors_raw and p.alibaba_price_min is not None:
+                        entry["profit_data"] = _compute_profit_data(
+                            p.alibaba_price_min,
+                            p.alibaba_price_max or p.alibaba_price_min,
+                            competitors_raw,
+                        )
+
+                    products_data.append(entry)
 
                 exporter = ExcelExporter()
-                saved_path = exporter.export(products_data, str(output_path))
+                saved_path = exporter.export(
+                    products_data, str(output_path),
+                    include_ml=do_ml, include_profit=do_profit,
+                )
 
                 with result_container:
                     ui.label(f"Exported to: {saved_path}").classes("text-body2 text-positive mt-2")
@@ -155,3 +211,79 @@ def export_page():
                     ui.label(
                         datetime.fromtimestamp(f.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
                     ).classes("text-caption text-secondary")
+
+
+def _compute_ml_data(
+    product_name: str,
+    competitors: list[dict],
+    alibaba_price_min: float | None,
+    alibaba_price_max: float | None,
+) -> dict:
+    """Compute ML-based data for a product's export row."""
+    try:
+        from src.services.match_scorer import score_matches
+        from src.services.price_recommender import recommend_pricing
+        from src.services.demand_estimator import estimate_demand
+        from src.services.query_optimizer import optimize_query
+    except ImportError:
+        return {}
+
+    try:
+        matches = score_matches(product_name, [dict(c) for c in competitors])
+        best_score = matches[0].get("match_score", 0) if matches else 0
+        top_3 = ", ".join(
+            (m.get("title") or "")[:50] for m in matches[:3]
+        ) if matches else ""
+
+        alibaba_cost = None
+        if alibaba_price_min is not None:
+            alibaba_cost = (
+                (alibaba_price_min + (alibaba_price_max or alibaba_price_min)) / 2.0
+            )
+        pricing = recommend_pricing(competitors, alibaba_cost)
+        demand = estimate_demand(competitors)
+
+        strategies = pricing.get("strategies") or {}
+        competitive = strategies.get("competitive") or {}
+        rec_price = competitive.get("price")
+        rationale = competitive.get("rationale", "")
+
+        # Profit margin for competitive strategy
+        margin = competitive.get("margin_percent")
+
+        # Demand level
+        market_size = demand.get("market_size_category", "")
+        demand_level = market_size.capitalize() if market_size else ""
+
+        # Estimated monthly revenue
+        est_monthly_revenue = competitive.get("estimated_monthly_revenue")
+
+        optimized_query = optimize_query(product_name)
+
+        return {
+            "best_match_score": best_score,
+            "price_strategy": "Competitive",
+            "demand_level": demand_level,
+            "estimated_monthly_revenue": est_monthly_revenue,
+            "profit_margin_pct": margin,
+            "optimized_query": optimized_query,
+            "top_3_matches": top_3,
+            "recommended_price": rec_price,
+            "rationale": rationale,
+            "market_size": demand_level,
+        }
+    except Exception:
+        return {}
+
+
+def _compute_profit_data(
+    alibaba_price_min: float,
+    alibaba_price_max: float,
+    competitors: list[dict],
+) -> dict:
+    """Compute profit analysis data for a product."""
+    try:
+        from src.services.profit_calculator import calculate_profit
+        return calculate_profit(alibaba_price_min, alibaba_price_max, competitors)
+    except Exception:
+        return {}
