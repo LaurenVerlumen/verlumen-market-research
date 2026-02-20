@@ -40,6 +40,12 @@ def _migrate_columns():
                 conn.execute(text(
                     "ALTER TABLE amazon_competitors ADD COLUMN match_score FLOAT"
                 ))
+        if "reviewed" not in columns:
+            logger.info("Adding reviewed column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN reviewed BOOLEAN DEFAULT 0"
+                ))
 
 
 def init_db():

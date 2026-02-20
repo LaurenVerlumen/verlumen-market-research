@@ -1,5 +1,6 @@
 """Product detail page - Alibaba info + Amazon competition analysis."""
 import asyncio
+import statistics as _stats
 from datetime import datetime
 
 from nicegui import ui
@@ -497,59 +498,163 @@ def product_detail_page(product_id: int):
                 f"{latest_session.created_at.strftime('%Y-%m-%d %H:%M') if latest_session.created_at else 'N/A'}"
             ).classes("text-caption text-secondary mb-2")
 
-            with ui.row().classes("gap-4 flex-wrap"):
-                stats_card("Competitors", str(latest_session.organic_results or 0), "groups", "primary")
-                stats_card(
-                    "Avg Price",
-                    f"${latest_session.avg_price:.2f}" if latest_session.avg_price else "N/A",
-                    "attach_money", "positive",
-                )
-                stats_card(
-                    "Avg Rating",
-                    f"{latest_session.avg_rating:.1f}" if latest_session.avg_rating else "N/A",
-                    "star", "accent",
-                )
-                stats_card(
-                    "Avg Reviews",
-                    str(latest_session.avg_reviews or 0),
-                    "reviews", "secondary",
-                )
+            session_id = latest_session.id
 
-            # Competitors table
-            competitors = (
-                session.query(AmazonCompetitor)
-                .filter(AmazonCompetitor.search_session_id == latest_session.id)
-                .order_by(AmazonCompetitor.position)
-                .all()
-            )
+            @ui.refreshable
+            def _competition_section():
+                """Render stats + competitor table + profit/AI cards (refreshable on delete)."""
+                db = get_session()
+                try:
+                    sess = db.query(SearchSession).filter(SearchSession.id == session_id).first()
+                    comps = (
+                        db.query(AmazonCompetitor)
+                        .filter(AmazonCompetitor.search_session_id == session_id)
+                        .order_by(AmazonCompetitor.position)
+                        .all()
+                    )
 
-            if competitors:
-                comp_data = [
-                    {
-                        "position": c.position,
-                        "title": c.title,
-                        "asin": c.asin,
-                        "price": c.price,
-                        "rating": c.rating,
-                        "review_count": c.review_count,
-                        "bought_last_month": c.bought_last_month,
-                        "badge": c.badge,
-                        "is_prime": c.is_prime,
-                        "is_sponsored": c.is_sponsored,
-                        "amazon_url": c.amazon_url,
-                        "thumbnail_url": c.thumbnail_url,
-                        "match_score": c.match_score,
-                    }
-                    for c in competitors
-                ]
+                    # Build stats from live competitor data
+                    prices = [c.price for c in comps if c.price is not None]
+                    ratings = [c.rating for c in comps if c.rating is not None]
+                    reviews = [c.review_count for c in comps if c.review_count is not None]
+                    n_comps = len(comps)
+                    avg_price = _stats.mean(prices) if prices else None
+                    avg_rating = _stats.mean(ratings) if ratings else None
+                    avg_reviews = int(_stats.mean(reviews)) if reviews else 0
 
-                competitor_table(comp_data)
+                    with ui.row().classes("gap-4 flex-wrap"):
+                        stats_card("Competitors", str(n_comps), "groups", "primary")
+                        stats_card(
+                            "Avg Price",
+                            f"${avg_price:.2f}" if avg_price else "N/A",
+                            "attach_money", "positive",
+                        )
+                        stats_card(
+                            "Avg Rating",
+                            f"{avg_rating:.1f}" if avg_rating else "N/A",
+                            "star", "accent",
+                        )
+                        stats_card(
+                            "Avg Reviews",
+                            str(avg_reviews),
+                            "reviews", "secondary",
+                        )
 
-            # --- Profit Analysis card ---
-            _render_profit_analysis(product, competitors if competitors else [])
+                    if comps:
+                        comp_data = [
+                            {
+                                "position": c.position,
+                                "title": c.title,
+                                "asin": c.asin,
+                                "price": c.price,
+                                "rating": c.rating,
+                                "review_count": c.review_count,
+                                "bought_last_month": c.bought_last_month,
+                                "badge": c.badge,
+                                "is_prime": c.is_prime,
+                                "is_sponsored": c.is_sponsored,
+                                "amazon_url": c.amazon_url,
+                                "thumbnail_url": c.thumbnail_url,
+                                "match_score": c.match_score,
+                                "reviewed": c.reviewed,
+                            }
+                            for c in comps
+                        ]
 
-            # --- Feature 4: AI Insights card ---
-            _render_ai_insights(product, competitors if competitors else [])
+                        def _delete_competitor(asin: str):
+                            """Delete a competitor by ASIN and recalculate session stats."""
+                            db2 = get_session()
+                            try:
+                                comp = (
+                                    db2.query(AmazonCompetitor)
+                                    .filter(
+                                        AmazonCompetitor.search_session_id == session_id,
+                                        AmazonCompetitor.asin == asin,
+                                    )
+                                    .first()
+                                )
+                                if comp:
+                                    db2.delete(comp)
+                                    db2.flush()
+
+                                    # Recalculate session stats from remaining competitors
+                                    remaining = (
+                                        db2.query(AmazonCompetitor)
+                                        .filter(AmazonCompetitor.search_session_id == session_id)
+                                        .all()
+                                    )
+                                    r_prices = [c.price for c in remaining if c.price is not None]
+                                    r_ratings = [c.rating for c in remaining if c.rating is not None]
+                                    r_reviews = [c.review_count for c in remaining if c.review_count is not None]
+
+                                    sess2 = db2.query(SearchSession).filter(SearchSession.id == session_id).first()
+                                    if sess2:
+                                        sess2.organic_results = len(remaining)
+                                        sess2.avg_price = _stats.mean(r_prices) if r_prices else None
+                                        sess2.avg_rating = _stats.mean(r_ratings) if r_ratings else None
+                                        sess2.avg_reviews = int(_stats.mean(r_reviews)) if r_reviews else None
+
+                                    db2.commit()
+                                    ui.notify(f"Removed competitor {asin}", type="positive")
+                                else:
+                                    ui.notify(f"Competitor {asin} not found", type="warning")
+                            finally:
+                                db2.close()
+                            _competition_section.refresh()
+
+                        def _update_score(asin: str, new_score: float):
+                            """Update a competitor's relevance score in the DB."""
+                            db3 = get_session()
+                            try:
+                                comp = (
+                                    db3.query(AmazonCompetitor)
+                                    .filter(
+                                        AmazonCompetitor.search_session_id == session_id,
+                                        AmazonCompetitor.asin == asin,
+                                    )
+                                    .first()
+                                )
+                                if comp:
+                                    comp.match_score = new_score
+                                    db3.commit()
+                                    ui.notify(f"Relevance for {asin} set to {new_score:.0f}", type="info")
+                            finally:
+                                db3.close()
+
+                        def _toggle_reviewed(asin: str, checked: bool):
+                            """Mark a competitor as seen/unseen in the DB."""
+                            db4 = get_session()
+                            try:
+                                comp = (
+                                    db4.query(AmazonCompetitor)
+                                    .filter(
+                                        AmazonCompetitor.search_session_id == session_id,
+                                        AmazonCompetitor.asin == asin,
+                                    )
+                                    .first()
+                                )
+                                if comp:
+                                    comp.reviewed = checked
+                                    db4.commit()
+                            finally:
+                                db4.close()
+
+                        competitor_table(
+                            comp_data,
+                            on_delete=_delete_competitor,
+                            on_score_change=_update_score,
+                            on_review_toggle=_toggle_reviewed,
+                        )
+
+                    # --- Profit Analysis card ---
+                    _render_profit_analysis(product, comps if comps else [])
+
+                    # --- Feature 4: AI Insights card ---
+                    _render_ai_insights(product, comps if comps else [])
+                finally:
+                    db.close()
+
+            _competition_section()
 
         finally:
             session.close()
