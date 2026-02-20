@@ -134,6 +134,29 @@ verlumenMarketResearch/
 └── data/                     # SQLite DB + exports
 ```
 
+### Competitor Management
+- **Delete competitors** — remove irrelevant Amazon results, stats recalculate automatically
+- **Editable relevance** — manually adjust match scores (0-100) when AI scoring is wrong
+- **"Seen" tracking** — auto-marks competitors as reviewed when clicking Amazon links, persists across sessions
+- **Thumbnails** — Amazon product images displayed inline in competitor table
+- **Advanced filtering** — keyword search, price range, min relevance, min rating, Prime only, badge filter, reviewed status
+
+## Roadmap: Phase 3 — State of the Art
+
+Transforming the tool into a professional-grade **product commercialization decision platform**:
+
+| Sprint | Feature | Description |
+|--------|---------|-------------|
+| 3.0 | **Critical Bug Fixes** | Fix broken AI Insights card, research page crash, dashboard sorting |
+| 3.1 | **Verlumen Viability Score** | Multi-dimensional GO/NO-GO score (1-10) based on demand, competition, profitability, market quality, differentiation |
+| 3.2 | **Decision Hub** | Dedicated evaluation page with comparison matrix, traffic-light verdicts, approve/reject workflow, radar charts |
+| 3.3 | **Enhanced Profitability** | Real FBA fee schedules by category/size, profitability waterfall chart, PPC cost estimates |
+| 3.4 | **Historical Tracking** | Daily price/BSR/review snapshots, trend charts, data freshness indicators |
+| 3.5 | **Code Quality** | Fix N+1 queries, add DB indexes, extract duplicated code, session context managers |
+| 3.6 | **UX Polish** | Sidebar active state, pagination, import preview, selective export, cancel research |
+
+**Future:** SP-API integration, review sentiment analysis, AI decision summaries, Google Trends, multi-marketplace, PDF reports.
+
 ---
 
 <p align="center">
