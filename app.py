@@ -1,7 +1,7 @@
 """Verlumen Market Research Tool - Main entry point."""
-from nicegui import ui
+from nicegui import app, ui
 
-from config import APP_TITLE, APP_PORT
+from config import APP_TITLE, APP_PORT, IMAGES_DIR
 from src.models import init_db
 from src.ui.pages.dashboard import dashboard_page
 from src.ui.pages.import_page import import_page
@@ -13,6 +13,9 @@ from src.ui.pages.settings import settings_page
 
 # Initialize database tables on startup
 init_db()
+
+# Serve locally-saved product images
+app.add_static_files("/images", str(IMAGES_DIR))
 
 
 @ui.page("/")

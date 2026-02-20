@@ -22,6 +22,7 @@ class Product(Base):
     alibaba_moq: Mapped[int | None] = mapped_column(Integer, nullable=True)
     alibaba_supplier: Mapped[str | None] = mapped_column(Text, nullable=True)
     alibaba_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_image_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     alibaba_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     amazon_search_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

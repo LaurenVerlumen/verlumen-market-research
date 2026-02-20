@@ -5,6 +5,7 @@ __pycache__/
 venv/
 data/verlumen.db
 data/exports/*.xlsx
+data/images/
 *.egg-info/
 .vscode/
 .idea/

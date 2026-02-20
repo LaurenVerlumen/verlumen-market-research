@@ -5,7 +5,7 @@ from nicegui import ui
 
 from config import SERPAPI_KEY
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
-from src.services import ImageFetcher
+from src.services import ImageFetcher, download_image, save_uploaded_image
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
@@ -23,6 +23,15 @@ _AVATAR_COLORS = [
 def _avatar_color(name: str) -> str:
     idx = ord(name[0].upper()) % len(_AVATAR_COLORS) if name else 0
     return _AVATAR_COLORS[idx]
+
+
+def _product_image_src(product) -> str | None:
+    """Return the best image source URL for a product (local preferred)."""
+    if product.local_image_path:
+        return f"/images/{product.local_image_path}"
+    if product.alibaba_image_url:
+        return product.alibaba_image_url
+    return None
 
 
 def product_detail_page(product_id: int):
@@ -85,18 +94,20 @@ def product_detail_page(product_id: int):
                 with ui.row().classes("items-start gap-6 w-full"):
                     # Product image / avatar placeholder
                     with ui.column().classes("items-center gap-1").style("flex-shrink:0"):
-                        if product.alibaba_image_url:
-                            image_el = ui.image(product.alibaba_image_url).classes(
+                        img_src = _product_image_src(product)
+                        if img_src:
+                            ui.image(img_src).classes(
                                 "w-32 h-32 rounded-lg object-cover"
                             )
                         else:
                             letter = product.name[0].upper() if product.name else "?"
                             bg = _avatar_color(product.name)
-                            image_el = ui.avatar(
+                            ui.avatar(
                                 letter, color=bg, text_color="white", size="128px",
                                 font_size="48px",
                             ).classes("rounded-lg")
 
+                        # Image action buttons
                         fetch_img_btn = ui.button(
                             "Fetch Image", icon="image_search",
                         ).props("flat dense size=sm color=secondary")
@@ -113,8 +124,8 @@ def product_detail_page(product_id: int):
                             fetch_img_status.text = "Searching..."
                             fetcher = ImageFetcher(SERPAPI_KEY)
 
-                            url = await asyncio.get_event_loop().run_in_executor(
-                                None, fetcher.fetch_product_image, product.name,
+                            url, filename = await asyncio.get_event_loop().run_in_executor(
+                                None, fetcher.fetch_and_save, product.name, product_id,
                             )
 
                             if url:
@@ -125,18 +136,47 @@ def product_detail_page(product_id: int):
                                     ).first()
                                     if p:
                                         p.alibaba_image_url = url
+                                        if filename:
+                                            p.local_image_path = filename
                                         db.commit()
                                 finally:
                                     db.close()
-                                fetch_img_status.text = "Image saved!"
-                                ui.notify("Image fetched successfully!", type="positive")
-                                # Reload page to show the new image
+                                fetch_img_status.text = "Image saved locally!"
+                                ui.notify("Image fetched & saved!", type="positive")
                                 ui.navigate.to(f"/products/{product_id}")
                             else:
                                 fetch_img_status.text = "No image found"
                                 fetch_img_btn.enable()
 
                         fetch_img_btn.on_click(_fetch_single_image)
+
+                        # Manual image upload
+                        async def _handle_image_upload(e):
+                            file_content = e.content.read()
+                            original_name = e.name
+                            filename = await asyncio.get_event_loop().run_in_executor(
+                                None, save_uploaded_image, file_content, product_id, original_name,
+                            )
+                            db = get_session()
+                            try:
+                                p = db.query(Product).filter(
+                                    Product.id == product_id
+                                ).first()
+                                if p:
+                                    p.local_image_path = filename
+                                    db.commit()
+                            finally:
+                                db.close()
+                            ui.notify("Image uploaded!", type="positive")
+                            ui.navigate.to(f"/products/{product_id}")
+
+                        ui.upload(
+                            label="Upload image",
+                            auto_upload=True,
+                            on_upload=_handle_image_upload,
+                        ).props(
+                            'accept="image/*" max-file-size=5242880 flat dense'
+                        ).classes("w-32").style("font-size:12px")
 
                     # Info grid
                     with ui.column().classes("flex-1 gap-2"):
@@ -170,6 +210,10 @@ def product_detail_page(product_id: int):
                                 _info_row("MOQ", str(product.alibaba_moq))
                             if product.notes:
                                 _info_row("Notes", product.notes)
+                            if product.local_image_path:
+                                _info_row("Image", "Saved locally")
+                            elif product.alibaba_image_url:
+                                _info_row("Image", "CDN only (not saved locally)")
 
                         # Prominent Alibaba link button
                         if product.alibaba_url:

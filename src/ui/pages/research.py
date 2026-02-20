@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime
 
 from nicegui import ui
+from sqlalchemy.orm import joinedload
 
 from config import SERPAPI_KEY
 from src.models import get_session, Product, SearchSession, AmazonCompetitor
@@ -31,14 +32,24 @@ def research_page():
                 ).props("color=warning")
             return
 
-        # Load products
+        # Load products (eagerly load category to avoid DetachedInstanceError)
         session = get_session()
         try:
-            products = session.query(Product).order_by(Product.category_id, Product.name).all()
+            products = (
+                session.query(Product)
+                .options(joinedload(Product.category))
+                .order_by(Product.category_id, Product.name)
+                .all()
+            )
+            # Build options while session is still open
+            product_options = {
+                p.id: f"{p.name} ({p.category.name if p.category else 'N/A'})"
+                for p in products
+            }
         finally:
             session.close()
 
-        if not products:
+        if not product_options:
             ui.label("No products imported yet.").classes("text-body2 text-secondary")
             ui.button(
                 "Import Excel", icon="upload_file",
@@ -48,8 +59,6 @@ def research_page():
 
         # Product selection
         ui.label("Select products to research:").classes("text-subtitle2 mb-1")
-
-        product_options = {p.id: f"{p.name} ({p.category.name})" for p in products}
         selected_ids = ui.select(
             options=product_options,
             multiple=True,

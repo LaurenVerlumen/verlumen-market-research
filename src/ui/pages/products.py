@@ -2,11 +2,21 @@
 import asyncio
 
 from nicegui import ui
+from sqlalchemy.orm import joinedload
 
 from config import SERPAPI_KEY
 from src.models import get_session, init_db, Category, Product, AmazonCompetitor, SearchSession
-from src.services import parse_alibaba_url, ImageFetcher
+from src.services import parse_alibaba_url, ImageFetcher, download_image
 from src.ui.layout import build_layout
+
+
+def _product_image_src(product) -> str | None:
+    """Return the best image source URL for a product (local preferred)."""
+    if product.local_image_path:
+        return f"/images/{product.local_image_path}"
+    if product.alibaba_image_url:
+        return product.alibaba_image_url
+    return None
 
 
 # Predefined palette for letter-avatar backgrounds
@@ -217,7 +227,7 @@ def products_page():
                 try:
                     missing = (
                         db.query(Product)
-                        .filter(Product.alibaba_image_url.is_(None))
+                        .filter(Product.local_image_path.is_(None))
                         .all()
                     )
                     product_list = [{"id": p.id, "name": p.name} for p in missing]
@@ -238,8 +248,8 @@ def products_page():
                     fetch_status.text = (
                         f"Fetching image {idx}/{total}: {prod['name'][:40]}..."
                     )
-                    url = await asyncio.get_event_loop().run_in_executor(
-                        None, fetcher.fetch_product_image, prod["name"],
+                    url, filename = await asyncio.get_event_loop().run_in_executor(
+                        None, fetcher.fetch_and_save, prod["name"], prod["id"],
                     )
 
                     if url:
@@ -248,6 +258,8 @@ def products_page():
                             p = db.query(Product).filter(Product.id == prod["id"]).first()
                             if p:
                                 p.alibaba_image_url = url
+                                if filename:
+                                    p.local_image_path = filename
                                 db.commit()
                                 fetched += 1
                         finally:
@@ -260,13 +272,16 @@ def products_page():
 
                 if not_found:
                     fetch_status.text = (
-                        f"Done! Fetched {fetched}/{total} images"
+                        f"Done! Fetched & saved {fetched}/{total} images"
                         f" ({not_found} not found)"
                     )
                 else:
-                    fetch_status.text = f"Done! Fetched {fetched}/{total} images"
+                    fetch_status.text = f"Done! Fetched & saved {fetched}/{total} images locally"
                 fetch_btn.enable()
-                refresh_products()
+                try:
+                    refresh_products()
+                except RuntimeError:
+                    pass  # User navigated away during fetch
 
             fetch_btn.on_click(_fetch_all_images)
 
@@ -283,7 +298,10 @@ def products_page():
 
             def _get_filtered_products(db):
                 """Query and filter products based on current filter state."""
-                query = db.query(Product)
+                query = db.query(Product).options(
+                    joinedload(Product.category),
+                    joinedload(Product.search_sessions),
+                )
 
                 # Category filter
                 if filter_select.value != "All":
@@ -333,8 +351,9 @@ def products_page():
                     # Top row: thumbnail + name + link
                     with ui.row().classes("items-start w-full gap-3"):
                         # Thumbnail / avatar
-                        if p.alibaba_image_url:
-                            ui.image(p.alibaba_image_url).classes(
+                        img_src = _product_image_src(p)
+                        if img_src:
+                            ui.image(img_src).classes(
                                 "w-16 h-16 rounded object-cover"
                             ).style("min-width:64px")
                         else:
@@ -407,8 +426,9 @@ def products_page():
                             lambda _, pid=p.id: ui.navigate.to(f"/products/{pid}"),
                         ):
                             # Thumbnail / avatar
-                            if p.alibaba_image_url:
-                                ui.image(p.alibaba_image_url).classes(
+                            img_src = _product_image_src(p)
+                            if img_src:
+                                ui.image(img_src).classes(
                                     "w-10 h-10 rounded object-cover"
                                 )
                             else:

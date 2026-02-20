@@ -1,9 +1,12 @@
 """Database engine, session factory, and base model."""
-from sqlalchemy import create_engine
+import logging
+
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from config import DATABASE_URL
 
+logger = logging.getLogger(__name__)
 
 engine = create_engine(DATABASE_URL, echo=False)
 SessionLocal = sessionmaker(bind=engine)
@@ -18,6 +21,19 @@ def get_session():
     return SessionLocal()
 
 
+def _migrate_columns():
+    """Add new columns to existing tables if missing."""
+    inspector = inspect(engine)
+    if "products" in inspector.get_table_names():
+        columns = {col["name"] for col in inspector.get_columns("products")}
+        if "local_image_path" not in columns:
+            logger.info("Adding local_image_path column to products table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE products ADD COLUMN local_image_path TEXT"
+                ))
+
+
 def init_db():
     """Create all tables defined by Base subclasses."""
     # Import all models so they register with Base.metadata
@@ -27,3 +43,4 @@ def init_db():
     import src.models.amazon_competitor  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate_columns()
