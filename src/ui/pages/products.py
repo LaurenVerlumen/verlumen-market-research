@@ -226,6 +226,12 @@ def products_page():
                 fetch_btn = ui.button(
                     "Fetch Product Images", icon="image_search",
                 ).props("color=secondary outline")
+                # Fetch Full Names button
+                names_btn = ui.button(
+                    "Fetch Full Names", icon="auto_fix_high",
+                ).props("outline").tooltip(
+                    "Fetch full product names from Google (1 API credit each)"
+                )
                 fetch_status = ui.label("").classes("text-body2 text-secondary")
 
             async def _fetch_all_images():
@@ -297,6 +303,64 @@ def products_page():
                     pass  # User navigated away during fetch
 
             fetch_btn.on_click(_fetch_all_images)
+
+            async def _fetch_full_names():
+                if not SERPAPI_KEY:
+                    ui.notify("SERPAPI_KEY is not configured.", type="negative")
+                    return
+
+                names_btn.disable()
+                fetch_status.text = "Loading products..."
+
+                db = get_session()
+                try:
+                    all_products = db.query(Product).all()
+                    product_list = [
+                        {"id": p.id, "name": p.name, "product_id": p.alibaba_product_id}
+                        for p in all_products
+                    ]
+                finally:
+                    db.close()
+
+                if not product_list:
+                    fetch_status.text = "No products found."
+                    names_btn.enable()
+                    return
+
+                from src.services.alibaba_parser import fetch_full_name
+                total = len(product_list)
+                updated = 0
+
+                for idx, prod in enumerate(product_list, start=1):
+                    fetch_status.text = (
+                        f"Fetching name {idx}/{total}: {prod['name'][:40]}..."
+                    )
+                    full_name = await asyncio.get_event_loop().run_in_executor(
+                        None, fetch_full_name, prod["name"], prod.get("product_id"),
+                    )
+                    if full_name and full_name != prod["name"]:
+                        db = get_session()
+                        try:
+                            p = db.query(Product).filter(Product.id == prod["id"]).first()
+                            if p:
+                                p.name = full_name
+                                p.amazon_search_query = full_name
+                                db.commit()
+                                updated += 1
+                        finally:
+                            db.close()
+
+                    if idx < total:
+                        await asyncio.sleep(1.5)
+
+                fetch_status.text = f"Done! Updated {updated}/{total} product names"
+                names_btn.enable()
+                try:
+                    refresh_products()
+                except RuntimeError:
+                    pass
+
+            names_btn.on_click(_fetch_full_names)
 
             # --- Bulk selection state ---
             bulk_selected: set[int] = set()

@@ -53,12 +53,35 @@ def product_detail_page(product_id: int):
                 ui.button("Back to Products", on_click=lambda: ui.navigate.to("/products"))
                 return
 
-            # Header with back button, product name, and delete
+            # Header with back button, editable product name, and delete
             with ui.row().classes("items-center gap-2 w-full"):
                 ui.button(
                     icon="arrow_back", on_click=lambda: ui.navigate.to("/products"),
                 ).props("flat round")
-                ui.label(product.name).classes("text-h5 font-bold flex-1")
+
+                name_input = ui.input(
+                    value=product.name,
+                ).classes("text-h5 font-bold flex-1").props(
+                    "borderless dense input-class='text-h5 font-bold'"
+                )
+
+                def _save_name():
+                    new_name = name_input.value.strip()
+                    if not new_name or new_name == product.name:
+                        return
+                    db = get_session()
+                    try:
+                        p = db.query(Product).filter(Product.id == product_id).first()
+                        if p:
+                            p.name = new_name
+                            p.amazon_search_query = new_name
+                            db.commit()
+                            ui.notify(f"Name updated to '{new_name}'", type="positive")
+                    finally:
+                        db.close()
+
+                name_input.on("blur", lambda: _save_name())
+                name_input.on("keydown.enter", lambda: _save_name())
 
                 def _show_delete_dialog():
                     with ui.dialog() as dlg, ui.card():
