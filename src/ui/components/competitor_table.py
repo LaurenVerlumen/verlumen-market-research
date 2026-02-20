@@ -1,18 +1,21 @@
 """Amazon competitor data table component."""
 from nicegui import ui
 
+from src.services.utils import parse_bought
+
 
 COLUMNS = [
     {"name": "actions", "label": "", "field": "actions", "align": "center", "sortable": False},
     {"name": "reviewed", "label": "Seen", "field": "reviewed", "sortable": True, "align": "center"},
     {"name": "position", "label": "#", "field": "position", "sortable": True, "align": "center"},
-    {"name": "match_score", "label": "Relevance", "field": "match_score", "sortable": True, "align": "center"},
+    {"name": "match_score", "label": "Relevance", "field": "match_score_raw", "sortable": True, "align": "center"},
     {"name": "title", "label": "Title", "field": "title", "sortable": True, "align": "left"},
     {"name": "asin", "label": "ASIN", "field": "asin", "sortable": True, "align": "left"},
-    {"name": "price", "label": "Price", "field": "price", "sortable": True, "align": "right"},
-    {"name": "rating", "label": "Rating", "field": "rating", "sortable": True, "align": "center"},
-    {"name": "review_count", "label": "Reviews", "field": "review_count", "sortable": True, "align": "right"},
-    {"name": "bought_last_month", "label": "Bought/Mo", "field": "bought_last_month", "align": "right"},
+    {"name": "price", "label": "Price", "field": "price_raw", "sortable": True, "align": "right"},
+    {"name": "rating", "label": "Rating", "field": "rating_raw", "sortable": True, "align": "center"},
+    {"name": "review_count", "label": "Reviews", "field": "review_count_raw", "sortable": True, "align": "right"},
+    {"name": "bought_last_month", "label": "Bought/Mo", "field": "bought_raw", "sortable": True, "align": "right"},
+    {"name": "est_revenue", "label": "Est. Rev/Mo", "field": "est_revenue_raw", "sortable": True, "align": "right"},
     {"name": "is_prime", "label": "Prime", "field": "is_prime", "align": "center"},
     {"name": "badge", "label": "Badge", "field": "badge", "align": "left"},
 ]
@@ -25,8 +28,11 @@ def competitor_table(
     competitors: list[dict],
     title: str = "Amazon Competitors",
     on_delete=None,
+    on_bulk_delete=None,
     on_score_change=None,
     on_review_toggle=None,
+    pagination_state: dict | None = None,
+    on_pagination_change=None,
 ):
     """Render a sortable, filterable data table of Amazon competitors.
 
@@ -38,12 +44,21 @@ def competitor_table(
         Card title.
     on_delete : callable or None
         If provided, adds a delete button per row. Called with ``asin`` (str).
+    on_bulk_delete : callable or None
+        If provided, enables multi-select with a "Delete selected" button.
+        Called with a list of ASINs.
     on_score_change : callable or None
         If provided, makes the Relevance column editable. Called with
         ``(asin: str, new_score: float)``.
     on_review_toggle : callable or None
         If provided, adds a "Seen" checkbox per row. Called with
         ``(asin: str, checked: bool)``.
+    pagination_state : dict or None
+        Saved pagination state (page, rowsPerPage, sortBy, descending) to
+        restore after a refresh.  When *None* defaults are computed.
+    on_pagination_change : callable or None
+        If provided, called with the full pagination dict whenever the user
+        changes page, rows-per-page, or sort settings.
     """
     all_rows = _prepare_rows(competitors)
     is_editable = on_delete or on_score_change or on_review_toggle
@@ -53,6 +68,14 @@ def competitor_table(
         with ui.row().classes("items-center gap-2 mb-2"):
             ui.label(title).classes("text-subtitle1 font-bold")
             count_label = ui.label(f"({len(all_rows)})").classes("text-body2 text-secondary")
+            if on_bulk_delete:
+                ui.space()
+                sel_label = ui.label("").classes("text-body2 text-secondary")
+                del_sel_btn = ui.button(
+                    "Delete selected", icon="delete_sweep",
+                ).props("color=negative outline size=sm")
+                sel_label.set_visibility(False)
+                del_sel_btn.set_visibility(False)
 
         if not all_rows:
             ui.label("No competitor data available.").classes("text-body2 text-secondary")
@@ -111,13 +134,43 @@ def competitor_table(
         has_scores = any(r.get("match_score_raw", 0) > 0 for r in all_rows)
         default_sort = "match_score" if has_scores else "position"
 
+        if pagination_state:
+            pagination = dict(pagination_state)
+        else:
+            pagination = {"rowsPerPage": 15, "sortBy": default_sort, "descending": has_scores}
+
         table = ui.table(
             columns=columns,
             rows=all_rows,
             row_key="asin",
-            pagination={"rowsPerPage": 15, "sortBy": default_sort, "descending": has_scores},
+            pagination=pagination,
+            selection="multiple" if on_bulk_delete else None,
         ).classes("w-full")
         table.props("flat bordered dense")
+
+        if on_pagination_change:
+            def _handle_pagination(e):
+                if isinstance(e.args, dict):
+                    on_pagination_change(e.args)
+
+            table.on("update:pagination", _handle_pagination)
+
+        if on_bulk_delete:
+            def _on_selection_change():
+                n = len(table.selected)
+                sel_label.set_visibility(n > 0)
+                del_sel_btn.set_visibility(n > 0)
+                sel_label.text = f"{n} selected"
+
+            table.on("selection", lambda e: _on_selection_change())
+
+            def _handle_bulk_delete():
+                asins = [r["asin"] for r in table.selected if r.get("asin")]
+                if asins:
+                    table.selected.clear()
+                    on_bulk_delete(asins)
+
+            del_sel_btn.on_click(_handle_bulk_delete)
 
         def _apply_filters():
             kw = (keyword_input.value or "").strip().lower()
@@ -255,15 +308,75 @@ def competitor_table(
                                      props.row.match_score_raw >= 30 ? '#f57f17' : '#c62828',
                               fontWeight: 'bold'
                           }">
-                        {{ props.value }}
+                        {{ Math.round(props.row.match_score_raw) }}
                     </span>
                     <span v-else style="color:#999">-</span>
                 </q-td>
             ''')
 
+        # --- Price cell (formatted from raw) ---
+        table.add_slot('body-cell-price', r'''
+            <q-td :props="props">
+                <span v-if="props.row.price_raw != null">
+                    ${{ props.row.price_raw.toFixed(2) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        # --- Rating cell (formatted from raw) ---
+        table.add_slot('body-cell-rating', r'''
+            <q-td :props="props">
+                <span v-if="props.row.rating_raw != null">
+                    {{ props.row.rating_raw.toFixed(1) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        # --- Review count cell (formatted from raw) ---
+        table.add_slot('body-cell-review_count', r'''
+            <q-td :props="props">
+                <span v-if="props.row.review_count_raw > 0">
+                    {{ props.row.review_count_raw.toLocaleString() }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        # --- Bought/Mo cell (display string, sorted by raw) ---
+        table.add_slot('body-cell-bought_last_month', r'''
+            <q-td :props="props">
+                <span v-if="props.row.bought_last_month && props.row.bought_last_month !== '-'">
+                    {{ props.row.bought_last_month }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        # --- Estimated Revenue/Mo cell (color-coded) ---
+        table.add_slot('body-cell-est_revenue', r'''
+            <q-td :props="props">
+                <span v-if="props.row.est_revenue_raw > 0"
+                      :style="{
+                          color: props.row.est_revenue_raw >= 10000 ? '#2e7d32' :
+                                 props.row.est_revenue_raw >= 3000 ? '#f57f17' : '#666',
+                          fontWeight: props.row.est_revenue_raw >= 3000 ? 'bold' : 'normal'
+                      }">
+                    ${{ props.row.est_revenue_raw.toLocaleString(undefined, {maximumFractionDigits: 0}) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
         _thumb_html = r'''
-            <q-avatar v-if="props.row.thumbnail_url" square size="36px" class="q-mr-sm" style="flex-shrink:0">
+            <q-avatar v-if="props.row.thumbnail_url" square size="36px" class="q-mr-sm cursor-pointer" style="flex-shrink:0">
                 <img :src="props.row.thumbnail_url" style="object-fit:contain" />
+                <q-tooltip anchor="center right" self="center left" :offset="[10, 0]"
+                           class="bg-white shadow-4" style="padding:4px; border-radius:8px">
+                    <img :src="props.row.thumbnail_url"
+                         style="max-width:250px; max-height:250px; object-fit:contain; display:block" />
+                </q-tooltip>
             </q-avatar>
         '''
 
@@ -276,18 +389,18 @@ def competitor_table(
                         <a v-if="props.row.amazon_url" :href="props.row.amazon_url" target="_blank"
                            class="text-primary" style="text-decoration:none"
                            @click="() => { if (!props.row.reviewed_raw) $parent.$emit('review', {asin: props.row.asin, checked: true}) }">
-                            {{ props.value }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                            {{ props.row.title }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
                         </a>
-                        <span v-else>{{ props.value }}</span>
+                        <span v-else>{{ props.row.title }}</span>
                     </div>
                 </q-td>
             ''')
             table.add_slot('body-cell-asin', r'''
                 <q-td :props="props">
-                    <a :href="'https://amazon.com/dp/' + props.value" target="_blank"
+                    <a :href="'https://amazon.com/dp/' + props.row.asin" target="_blank"
                        class="text-primary" style="text-decoration:none"
                        @click="() => { if (!props.row.reviewed_raw) $parent.$emit('review', {asin: props.row.asin, checked: true}) }">
-                        {{ props.value }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                        {{ props.row.asin }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
                     </a>
                 </q-td>
             ''')
@@ -298,17 +411,17 @@ def competitor_table(
                         ''' + _thumb_html + r'''
                         <a v-if="props.row.amazon_url" :href="props.row.amazon_url" target="_blank"
                            class="text-primary" style="text-decoration:none">
-                            {{ props.value }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                            {{ props.row.title }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
                         </a>
-                        <span v-else>{{ props.value }}</span>
+                        <span v-else>{{ props.row.title }}</span>
                     </div>
                 </q-td>
             ''')
             table.add_slot('body-cell-asin', r'''
                 <q-td :props="props">
-                    <a :href="'https://amazon.com/dp/' + props.value" target="_blank"
+                    <a :href="'https://amazon.com/dp/' + props.row.asin" target="_blank"
                        class="text-primary" style="text-decoration:none">
-                        {{ props.value }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                        {{ props.row.asin }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
                     </a>
                 </q-td>
             ''')
@@ -358,18 +471,26 @@ def _prepare_rows(competitors: list[dict]) -> list[dict]:
         score = c.get("match_score")
         rating = c.get("rating")
         reviewed = c.get("reviewed", False)
+        review_count = c.get("review_count")
+        bought_str = c.get("bought_last_month") or ""
+        bought_num = parse_bought(bought_str)
+
+        # Estimated monthly revenue = price * units bought
+        est_revenue = None
+        if price is not None and bought_num is not None and bought_num > 0:
+            est_revenue = price * bought_num
+
         rows.append({
             "position": c.get("position", 0),
-            "match_score": f"{score:.0f}" if score is not None else "-",
             "match_score_raw": score or 0,
             "title": _truncate(c.get("title", ""), 80),
             "asin": c.get("asin", ""),
-            "price": f"${price:.2f}" if price is not None else "-",
             "price_raw": price,
-            "rating": f"{rating:.1f}" if rating is not None else "-",
             "rating_raw": rating,
-            "review_count": c.get("review_count") if c.get("review_count") is not None else "-",
-            "bought_last_month": c.get("bought_last_month") or "-",
+            "review_count_raw": review_count if review_count is not None else 0,
+            "bought_last_month": bought_str or "-",
+            "bought_raw": bought_num or 0,
+            "est_revenue_raw": est_revenue or 0,
             "is_prime": "Yes" if c.get("is_prime") else "No",
             "badge": c.get("badge") or "-",
             "amazon_url": c.get("amazon_url", ""),

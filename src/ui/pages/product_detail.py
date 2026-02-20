@@ -7,6 +7,7 @@ from nicegui import ui
 
 from config import SERPAPI_KEY
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
+from src.models.category import Category
 from config import AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
 from src.services import (
     ImageFetcher, download_image, save_uploaded_image,
@@ -193,10 +194,33 @@ def product_detail_page(product_id: int):
                             "text-subtitle1 font-bold mb-2"
                         )
                         with ui.grid(columns=2).classes("gap-x-8 gap-y-2"):
-                            _info_row(
-                                "Category",
-                                product.category.name if product.category else "N/A",
+                            ui.label("Category").classes(
+                                "text-caption text-secondary font-medium"
                             )
+                            # Editable category selector
+                            all_cats = session.query(Category).order_by(Category.name).all()
+                            cat_options = {c.id: c.name for c in all_cats}
+                            cat_select = ui.select(
+                                options=cat_options,
+                                value=product.category_id,
+                            ).props("dense outlined").classes("text-body2")
+
+                            def _save_category(e, pid=product.id):
+                                new_cat_id = cat_select.value
+                                if new_cat_id == product.category_id:
+                                    return
+                                db = get_session()
+                                try:
+                                    p = db.query(Product).filter(Product.id == pid).first()
+                                    if p:
+                                        p.category_id = new_cat_id
+                                        db.commit()
+                                        cat_name = cat_options.get(new_cat_id, "")
+                                        ui.notify(f"Category changed to '{cat_name}'", type="positive")
+                                finally:
+                                    db.close()
+
+                            cat_select.on("update:model-value", _save_category)
                             _info_row(
                                 "Alibaba Product ID",
                                 product.alibaba_product_id or "N/A",
@@ -484,6 +508,7 @@ def product_detail_page(product_id: int):
             ).classes("text-caption text-secondary mb-2")
 
             session_id = latest_session.id
+            _saved_pagination = [None]  # mutable container to preserve pagination across refreshes
 
             @ui.refreshable
             def _competition_section():
@@ -562,6 +587,24 @@ def product_detail_page(product_id: int):
                             for c in comps
                         ]
 
+                        def _recalc_session_stats(db_sess):
+                            """Recalculate session stats from remaining competitors."""
+                            remaining = (
+                                db_sess.query(AmazonCompetitor)
+                                .filter(AmazonCompetitor.search_session_id == session_id)
+                                .all()
+                            )
+                            r_prices = [c.price for c in remaining if c.price is not None]
+                            r_ratings = [c.rating for c in remaining if c.rating is not None]
+                            r_reviews = [c.review_count for c in remaining if c.review_count is not None]
+
+                            sess_obj = db_sess.query(SearchSession).filter(SearchSession.id == session_id).first()
+                            if sess_obj:
+                                sess_obj.organic_results = len(remaining)
+                                sess_obj.avg_price = _stats.mean(r_prices) if r_prices else None
+                                sess_obj.avg_rating = _stats.mean(r_ratings) if r_ratings else None
+                                sess_obj.avg_reviews = int(_stats.mean(r_reviews)) if r_reviews else None
+
                         def _delete_competitor(asin: str):
                             """Delete a competitor by ASIN and recalculate session stats."""
                             db2 = get_session()
@@ -577,28 +620,40 @@ def product_detail_page(product_id: int):
                                 if comp:
                                     db2.delete(comp)
                                     db2.flush()
-
-                                    # Recalculate session stats from remaining competitors
-                                    remaining = (
-                                        db2.query(AmazonCompetitor)
-                                        .filter(AmazonCompetitor.search_session_id == session_id)
-                                        .all()
-                                    )
-                                    r_prices = [c.price for c in remaining if c.price is not None]
-                                    r_ratings = [c.rating for c in remaining if c.rating is not None]
-                                    r_reviews = [c.review_count for c in remaining if c.review_count is not None]
-
-                                    sess2 = db2.query(SearchSession).filter(SearchSession.id == session_id).first()
-                                    if sess2:
-                                        sess2.organic_results = len(remaining)
-                                        sess2.avg_price = _stats.mean(r_prices) if r_prices else None
-                                        sess2.avg_rating = _stats.mean(r_ratings) if r_ratings else None
-                                        sess2.avg_reviews = int(_stats.mean(r_reviews)) if r_reviews else None
-
+                                    _recalc_session_stats(db2)
                                     db2.commit()
                                     ui.notify(f"Removed competitor {asin}", type="positive")
                                 else:
                                     ui.notify(f"Competitor {asin} not found", type="warning")
+                            finally:
+                                db2.close()
+                            _competition_section.refresh()
+
+                        def _bulk_delete_competitors(asins: list[str]):
+                            """Delete multiple competitors and recalculate stats once."""
+                            db2 = get_session()
+                            try:
+                                deleted = 0
+                                for asin in asins:
+                                    comp = (
+                                        db2.query(AmazonCompetitor)
+                                        .filter(
+                                            AmazonCompetitor.search_session_id == session_id,
+                                            AmazonCompetitor.asin == asin,
+                                        )
+                                        .first()
+                                    )
+                                    if comp:
+                                        db2.delete(comp)
+                                        deleted += 1
+                                if deleted:
+                                    db2.flush()
+                                    _recalc_session_stats(db2)
+                                    db2.commit()
+                                    ui.notify(
+                                        f"Removed {deleted} competitor{'s' if deleted != 1 else ''}",
+                                        type="positive",
+                                    )
                             finally:
                                 db2.close()
                             _competition_section.refresh()
@@ -659,8 +714,11 @@ def product_detail_page(product_id: int):
                         competitor_table(
                             comp_data,
                             on_delete=_delete_competitor,
+                            on_bulk_delete=_bulk_delete_competitors,
                             on_score_change=_update_score,
                             on_review_toggle=_toggle_reviewed,
+                            pagination_state=_saved_pagination[0],
+                            on_pagination_change=lambda p: _saved_pagination.__setitem__(0, p),
                         )
 
                     # --- Profit Analysis card ---
