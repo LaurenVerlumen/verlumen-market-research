@@ -543,32 +543,7 @@ def product_detail_page(product_id: int):
                     for c in competitors
                 ]
 
-                # Relevance filter slider
-                has_scores = any(c.get("match_score") for c in comp_data)
-                relevance_container = ui.column().classes("w-full")
-
-                if has_scores:
-                    with ui.row().classes("w-full items-center gap-4 mb-2"):
-                        ui.label("Min Relevance:").classes("text-body2 font-medium")
-                        relevance_slider = ui.slider(
-                            min=0, max=100, value=10, step=5,
-                        ).props("label-always").classes("flex-1")
-                        relevance_value_label = ui.label("10").classes("text-body2 w-8")
-
-                    def _refresh_table():
-                        val = int(relevance_slider.value)
-                        relevance_value_label.text = str(val)
-                        relevance_container.clear()
-                        with relevance_container:
-                            competitor_table(comp_data, min_relevance=val)
-
-                    relevance_slider.on("update:model-value", lambda _: _refresh_table())
-                    # Initial render with default threshold
-                    with relevance_container:
-                        competitor_table(comp_data, min_relevance=10)
-                else:
-                    with relevance_container:
-                        competitor_table(comp_data)
+                competitor_table(comp_data)
 
             # --- Profit Analysis card ---
             _render_profit_analysis(product, competitors if competitors else [])

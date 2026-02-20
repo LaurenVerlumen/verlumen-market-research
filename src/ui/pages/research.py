@@ -319,9 +319,34 @@ def research_page():
         _render_grid()
         _update_summary()
 
-        # --- Progress area ---
-        progress_container = ui.column().classes("w-full")
-        log_area = ui.log(max_lines=50).classes("w-full h-64 mt-4")
+        # --- Run button row (placed BEFORE progress area) ---
+        with ui.row().classes("gap-3 mt-2 items-center"):
+            run_btn = ui.button(
+                "Run Research for Selected", icon="search",
+            ).props("color=positive")
+
+            remaining_label = ui.label("").classes("text-caption text-secondary")
+
+            async def check_remaining():
+                service = AmazonSearchService(api_key=SERPAPI_KEY)
+                remaining = service.get_remaining_searches()
+                if remaining is not None:
+                    remaining_label.text = f"SerpAPI searches remaining: {remaining}"
+                else:
+                    remaining_label.text = "Could not check remaining searches."
+
+            ui.button(
+                "Check API Credits", icon="info", on_click=check_remaining,
+            ).props("flat color=grey")
+
+        # --- Progress area (hidden until research starts) ---
+        progress_card = ui.card().classes("w-full p-4 mt-4")
+        progress_card.visible = False
+
+        with progress_card:
+            ui.label("Research Progress").classes("text-subtitle2 font-bold mb-2")
+            progress_container = ui.column().classes("w-full")
+            log_area = ui.log(max_lines=100).classes("w-full h-64")
 
         async def run_research():
             """Run Amazon search for selected products."""
@@ -335,6 +360,11 @@ def research_page():
             analyzer = CompetitionAnalyzer()
 
             try:
+                # Show progress area and give immediate feedback
+                progress_card.visible = True
+                run_btn.disable()
+                log_area.clear()
+
                 progress_container.clear()
                 with progress_container:
                     progress = ui.linear_progress(value=0, show_value=False).classes(
@@ -342,9 +372,15 @@ def research_page():
                     )
                     with ui.row().classes("items-center gap-3 mt-1"):
                         current_thumb = ui.element("div").classes("w-10 h-10")
-                        status_label = ui.label("Starting research...").classes(
-                            "text-body2 text-secondary"
-                        )
+                        status_label = ui.label(
+                            f"Starting research for {len(ids)} products..."
+                        ).classes("text-body2 text-secondary")
+
+                log_area.push(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Starting research for {len(ids)} product(s), "
+                    f"{pps} page(s) per search..."
+                )
 
                 total = len(ids)
                 completed = 0
@@ -521,23 +557,10 @@ def research_page():
                 )
             except RuntimeError:
                 return
+            finally:
+                try:
+                    run_btn.enable()
+                except RuntimeError:
+                    pass
 
-        # --- Run button row ---
-        with ui.row().classes("gap-3 mt-2 items-center"):
-            ui.button(
-                "Run Research for Selected", icon="search", on_click=run_research,
-            ).props("color=positive")
-
-            remaining_label = ui.label("").classes("text-caption text-secondary")
-
-            async def check_remaining():
-                service = AmazonSearchService(api_key=SERPAPI_KEY)
-                remaining = service.get_remaining_searches()
-                if remaining is not None:
-                    remaining_label.text = f"SerpAPI searches remaining: {remaining}"
-                else:
-                    remaining_label.text = "Could not check remaining searches."
-
-            ui.button(
-                "Check API Credits", icon="info", on_click=check_remaining,
-            ).props("flat color=grey")
+        run_btn.on_click(run_research)
