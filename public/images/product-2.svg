@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="bg2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F9F7F4"/>
+      <stop offset="100%" style="stop-color:#F2F0EC"/>
+    </linearGradient>
+    <linearGradient id="greenBlock" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ABCB9D"/>
+      <stop offset="100%" style="stop-color:#89AC7B"/>
+    </linearGradient>
+    <linearGradient id="coralBlock" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#DAADA0"/>
+      <stop offset="100%" style="stop-color:#D4A59E"/>
+    </linearGradient>
+    <linearGradient id="brownBlock" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#B09878"/>
+      <stop offset="100%" style="stop-color:#A08968"/>
+    </linearGradient>
+    <linearGradient id="goldenBlock" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#DED2A8"/>
+      <stop offset="100%" style="stop-color:#C8B494"/>
+    </linearGradient>
+    <linearGradient id="peachBlock" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#D8BBA8"/>
+      <stop offset="100%" style="stop-color:#C0A480"/>
+    </linearGradient>
+    <filter id="shadow2" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#4A4443" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="400" height="400" rx="20" fill="url(#bg2)"/>
+  <!-- Subtle decorative circles -->
+  <circle cx="320" cy="70" r="45" fill="#C8B494" opacity="0.06"/>
+  <circle cx="60" cy="340" r="50" fill="#89AC7B" opacity="0.05"/>
+  <circle cx="350" cy="320" r="30" fill="#D4A59E" opacity="0.05"/>
+  <!-- Floor shadow -->
+  <ellipse cx="200" cy="340" rx="140" ry="16" fill="#A08968" opacity="0.08"/>
+  <!-- === BACK ROW BLOCKS === -->
+  <!-- Back left - sage cube -->
+  <g filter="url(#shadow2)">
+    <!-- Top -->
+    <polygon points="110,185 145,168 180,185 145,202" fill="#ABCB9D"/>
+    <!-- Left face -->
+    <polygon points="110,185 145,202 145,242 110,225" fill="url(#greenBlock)"/>
+    <!-- Right face -->
+    <polygon points="145,202 180,185 180,225 145,242" fill="#7B986C"/>
+  </g>
+  <!-- Back right - coral cube -->
+  <g filter="url(#shadow2)">
+    <polygon points="210,185 245,168 280,185 245,202" fill="#E4BBB2"/>
+    <polygon points="210,185 245,202 245,242 210,225" fill="url(#coralBlock)"/>
+    <polygon points="245,202 280,185 280,225 245,242" fill="#BA8C84"/>
+  </g>
+  <!-- === FRONT ROW BLOCKS === -->
+  <!-- Front left - golden cube -->
+  <g filter="url(#shadow2)">
+    <polygon points="85,240 120,223 155,240 120,257" fill="#E8DDB8"/>
+    <polygon points="85,240 120,257 120,297 85,280" fill="url(#goldenBlock)"/>
+    <polygon points="120,257 155,240 155,280 120,297" fill="#AE9A60"/>
+  </g>
+  <!-- Front middle - wood tall block -->
+  <g filter="url(#shadow2)">
+    <polygon points="155,230 190,213 225,230 190,247" fill="#C8AA88"/>
+    <polygon points="155,230 190,247 190,307 155,290" fill="url(#brownBlock)"/>
+    <polygon points="190,247 225,230 225,290 190,307" fill="#806E50"/>
+  </g>
+  <!-- Front right - peach cube -->
+  <g filter="url(#shadow2)">
+    <polygon points="225,240 260,223 295,240 260,257" fill="#E4CBB8"/>
+    <polygon points="225,240 260,257 260,297 225,280" fill="url(#peachBlock)"/>
+    <polygon points="260,257 295,240 295,280 260,297" fill="#B09478"/>
+  </g>
+  <!-- === TOP BLOCKS === -->
+  <!-- Top center - coral small cube -->
+  <g filter="url(#shadow2)">
+    <polygon points="160,155 185,143 210,155 185,167" fill="#E4BBB2"/>
+    <polygon points="160,155 185,167 185,195 160,183" fill="url(#coralBlock)"/>
+    <polygon points="185,167 210,155 210,183 185,195" fill="#BA8C84"/>
+  </g>
+  <!-- === CYLINDER (front left area) === -->
+  <g filter="url(#shadow2)">
+    <ellipse cx="315" cy="258" rx="22" ry="10" fill="#6D8E60"/>
+    <rect x="293" y="258" width="44" height="50" fill="url(#greenBlock)"/>
+    <ellipse cx="315" cy="308" rx="22" ry="10" fill="#7B986C"/>
+    <ellipse cx="315" cy="258" rx="22" ry="10" fill="#ABCB9D"/>
+  </g>
+  <!-- === TRIANGLE / ARCH piece === -->
+  <g filter="url(#shadow2)">
+    <polygon points="72,297 72,270 100,250 128,270 128,297" fill="#D4A59E"/>
+    <polygon points="72,270 100,250 100,245 72,265" fill="#E4BBB2"/>
+    <polygon points="100,250 128,270 128,265 100,245" fill="#BA8C84"/>
+  </g>
+  <!-- Small scattered blocks in background for depth -->
+  <!-- Tiny arch -->
+  <path d="M310,170 Q325,145 340,170" fill="none" stroke="#C8B494" stroke-width="8" stroke-linecap="round" opacity="0.4"/>
+  <!-- Decorative leaves -->
+  <ellipse cx="55" cy="140" rx="9" ry="3.5" fill="#89AC7B" opacity="0.2" transform="rotate(-20 55 140)"/>
+  <ellipse cx="340" cy="360" rx="7" ry="3" fill="#89AC7B" opacity="0.2" transform="rotate(25 340 360)"/>
+</svg>

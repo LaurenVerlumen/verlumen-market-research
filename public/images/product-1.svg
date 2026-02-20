@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="bg1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F9F7F4"/>
+      <stop offset="100%" style="stop-color:#F2F0EC"/>
+    </linearGradient>
+    <linearGradient id="pole" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#C8B494"/>
+      <stop offset="50%" style="stop-color:#D8C8A8"/>
+      <stop offset="100%" style="stop-color:#C0A480"/>
+    </linearGradient>
+    <linearGradient id="ring1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#ABCB9D"/>
+      <stop offset="100%" style="stop-color:#89AC7B"/>
+    </linearGradient>
+    <linearGradient id="ring2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#DAADA0"/>
+      <stop offset="100%" style="stop-color:#D4A59E"/>
+    </linearGradient>
+    <linearGradient id="ring3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#DED2A8"/>
+      <stop offset="100%" style="stop-color:#C8B494"/>
+    </linearGradient>
+    <linearGradient id="ring4" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#B09878"/>
+      <stop offset="100%" style="stop-color:#A08968"/>
+    </linearGradient>
+    <linearGradient id="ring5" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#D0AA98"/>
+      <stop offset="100%" style="stop-color:#C0A480"/>
+    </linearGradient>
+    <filter id="shadow1" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#4A4443" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="400" height="400" rx="20" fill="url(#bg1)"/>
+  <!-- Subtle background circles -->
+  <circle cx="80" cy="80" r="40" fill="#89AC7B" opacity="0.05"/>
+  <circle cx="330" cy="120" r="55" fill="#D4A59E" opacity="0.05"/>
+  <circle cx="100" cy="340" r="35" fill="#C8B494" opacity="0.05"/>
+  <!-- Base platform -->
+  <ellipse cx="200" cy="330" rx="100" ry="18" fill="#A08968" opacity="0.12"/>
+  <!-- Wooden base disc -->
+  <ellipse cx="200" cy="310" rx="85" ry="16" fill="#C0A480" filter="url(#shadow1)"/>
+  <ellipse cx="200" cy="306" rx="85" ry="16" fill="#D8C8A8"/>
+  <ellipse cx="200" cy="304" rx="78" ry="13" fill="#C8B494"/>
+  <!-- Center pole -->
+  <rect x="194" y="150" width="12" height="156" rx="6" fill="url(#pole)" filter="url(#shadow1)"/>
+  <!-- Ring 5 (bottom, largest) - wood -->
+  <ellipse cx="200" cy="290" rx="70" ry="14" fill="#806E50"/>
+  <rect x="130" y="270" width="140" height="20" rx="5" fill="url(#ring4)"/>
+  <ellipse cx="200" cy="270" rx="70" ry="14" fill="#B09878"/>
+  <!-- Ring 4 - peach -->
+  <ellipse cx="200" cy="262" rx="60" ry="12" fill="#B09478"/>
+  <rect x="140" y="244" width="120" height="18" rx="5" fill="url(#ring5)"/>
+  <ellipse cx="200" cy="244" rx="60" ry="12" fill="#D8BBA8"/>
+  <!-- Ring 3 - golden -->
+  <ellipse cx="200" cy="236" rx="52" ry="11" fill="#AE9A60"/>
+  <rect x="148" y="220" width="104" height="16" rx="5" fill="url(#ring3)"/>
+  <ellipse cx="200" cy="220" rx="52" ry="11" fill="#DED2A8"/>
+  <!-- Ring 2 - coral -->
+  <ellipse cx="200" cy="212" rx="44" ry="10" fill="#B08578"/>
+  <rect x="156" y="198" width="88" height="14" rx="5" fill="url(#ring2)"/>
+  <ellipse cx="200" cy="198" rx="44" ry="10" fill="#DAADA0"/>
+  <!-- Ring 1 (top, smallest) - sage -->
+  <ellipse cx="200" cy="190" rx="36" ry="9" fill="#6D8E60"/>
+  <rect x="164" y="178" width="72" height="12" rx="5" fill="url(#ring1)"/>
+  <ellipse cx="200" cy="178" rx="36" ry="9" fill="#ABCB9D"/>
+  <!-- Top knob - cute woodland animal (owl shape) -->
+  <ellipse cx="200" cy="158" rx="16" ry="18" fill="#A08968" filter="url(#shadow1)"/>
+  <ellipse cx="200" cy="155" rx="16" ry="18" fill="#C8B494"/>
+  <!-- Owl eyes -->
+  <circle cx="193" cy="152" r="5" fill="#F9F7F4"/>
+  <circle cx="207" cy="152" r="5" fill="#F9F7F4"/>
+  <circle cx="193" cy="152" r="2.5" fill="#4A4443"/>
+  <circle cx="207" cy="152" r="2.5" fill="#4A4443"/>
+  <!-- Owl beak -->
+  <polygon points="200,156 197,160 203,160" fill="#D4A59E"/>
+  <!-- Owl ear tufts -->
+  <polygon points="188,140 186,134 192,140" fill="#C0A480"/>
+  <polygon points="212,140 214,134 208,140" fill="#C0A480"/>
+  <!-- Small decorative leaves -->
+  <ellipse cx="285" cy="200" rx="8" ry="3.5" fill="#89AC7B" opacity="0.3" transform="rotate(-40 285 200)"/>
+  <ellipse cx="115" cy="230" rx="7" ry="3" fill="#89AC7B" opacity="0.25" transform="rotate(30 115 230)"/>
+</svg>

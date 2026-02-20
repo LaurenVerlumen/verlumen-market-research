@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <defs>
+    <linearGradient id="bg3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F9F7F4"/>
+      <stop offset="100%" style="stop-color:#F2F0EC"/>
+    </linearGradient>
+    <linearGradient id="woodBody" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#D8C8A8"/>
+      <stop offset="100%" style="stop-color:#C0A480"/>
+    </linearGradient>
+    <linearGradient id="woodDark" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#B09878"/>
+      <stop offset="100%" style="stop-color:#A08968"/>
+    </linearGradient>
+    <linearGradient id="handleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#C0A480"/>
+      <stop offset="50%" style="stop-color:#D8C8A8"/>
+      <stop offset="100%" style="stop-color:#C0A480"/>
+    </linearGradient>
+    <filter id="shadow3" x="-5%" y="-5%" width="110%" height="115%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#4A4443" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="400" height="400" rx="20" fill="url(#bg3)"/>
+  <!-- Subtle background shapes -->
+  <circle cx="70" cy="90" r="35" fill="#89AC7B" opacity="0.05"/>
+  <circle cx="340" cy="100" r="50" fill="#D4A59E" opacity="0.04"/>
+  <circle cx="320" cy="350" r="40" fill="#C8B494" opacity="0.05"/>
+  <!-- Floor shadow -->
+  <ellipse cx="200" cy="350" rx="130" ry="14" fill="#A08968" opacity="0.08"/>
+  <!-- === HANDLE === -->
+  <!-- Handle vertical poles -->
+  <rect x="148" y="85" width="10" height="140" rx="5" fill="url(#handleGrad)" filter="url(#shadow3)"/>
+  <rect x="242" y="85" width="10" height="140" rx="5" fill="url(#handleGrad)" filter="url(#shadow3)"/>
+  <!-- Handle crossbar -->
+  <rect x="148" y="78" width="104" height="14" rx="7" fill="#C8B494" filter="url(#shadow3)"/>
+  <rect x="148" y="76" width="104" height="12" rx="6" fill="#D8C8A8"/>
+  <!-- === WALKER BODY (fox shape) === -->
+  <g filter="url(#shadow3)">
+    <!-- Main body - rounded rectangle -->
+    <rect x="120" y="210" width="160" height="90" rx="20" fill="url(#woodBody)"/>
+    <!-- Body top highlight -->
+    <rect x="125" y="212" width="150" height="30" rx="15" fill="#DED2A8" opacity="0.4"/>
+    <!-- Wood grain lines -->
+    <line x1="140" y1="225" x2="260" y2="225" stroke="#B09878" stroke-width="0.5" opacity="0.3"/>
+    <line x1="135" y1="245" x2="265" y2="245" stroke="#B09878" stroke-width="0.5" opacity="0.3"/>
+    <line x1="138" y1="265" x2="262" y2="265" stroke="#B09878" stroke-width="0.5" opacity="0.3"/>
+  </g>
+  <!-- === FOX FACE === -->
+  <!-- Fox head -->
+  <ellipse cx="200" cy="195" rx="50" ry="35" fill="#D4A59E" filter="url(#shadow3)"/>
+  <ellipse cx="200" cy="192" rx="48" ry="33" fill="#DAADA0"/>
+  <!-- Fox ears -->
+  <polygon points="160,175 150,140 178,168" fill="#D4A59E"/>
+  <polygon points="163,173 155,145 177,168" fill="#DAADA0"/>
+  <polygon points="166,170 159,150 176,167" fill="#E4C0BB" opacity="0.6"/>
+  <polygon points="240,175 250,140 222,168" fill="#D4A59E"/>
+  <polygon points="237,173 245,145 223,168" fill="#DAADA0"/>
+  <polygon points="234,170 241,150 224,167" fill="#E4C0BB" opacity="0.6"/>
+  <!-- Fox white cheeks -->
+  <ellipse cx="200" cy="202" rx="30" ry="18" fill="#F9F7F4" opacity="0.85"/>
+  <!-- Fox eyes -->
+  <ellipse cx="183" cy="188" rx="6" ry="7" fill="#F9F7F4"/>
+  <ellipse cx="217" cy="188" rx="6" ry="7" fill="#F9F7F4"/>
+  <circle cx="184" cy="189" r="3.5" fill="#4A4443"/>
+  <circle cx="218" cy="189" r="3.5" fill="#4A4443"/>
+  <!-- Eye shine -->
+  <circle cx="186" cy="187" r="1.2" fill="#FDFCFA"/>
+  <circle cx="220" cy="187" r="1.2" fill="#FDFCFA"/>
+  <!-- Fox nose -->
+  <ellipse cx="200" cy="200" rx="5" ry="3.5" fill="#4A4443"/>
+  <!-- Fox mouth -->
+  <path d="M195,204 Q200,208 205,204" fill="none" stroke="#4A4443" stroke-width="1" stroke-linecap="round"/>
+  <!-- === WHEELS === -->
+  <!-- Left front wheel -->
+  <g filter="url(#shadow3)">
+    <circle cx="150" cy="320" r="24" fill="#A08968"/>
+    <circle cx="150" cy="320" r="22" fill="url(#woodDark)"/>
+    <circle cx="150" cy="320" r="18" fill="#C8B494"/>
+    <circle cx="150" cy="320" r="14" fill="#C0A480"/>
+    <!-- Wheel hub -->
+    <circle cx="150" cy="320" r="5" fill="#A08968"/>
+    <circle cx="150" cy="320" r="3" fill="#D8C8A8"/>
+    <!-- Rubber rim -->
+    <circle cx="150" cy="320" r="23" fill="none" stroke="#6B5E4E" stroke-width="2.5" opacity="0.5"/>
+  </g>
+  <!-- Right front wheel -->
+  <g filter="url(#shadow3)">
+    <circle cx="250" cy="320" r="24" fill="#A08968"/>
+    <circle cx="250" cy="320" r="22" fill="url(#woodDark)"/>
+    <circle cx="250" cy="320" r="18" fill="#C8B494"/>
+    <circle cx="250" cy="320" r="14" fill="#C0A480"/>
+    <circle cx="250" cy="320" r="5" fill="#A08968"/>
+    <circle cx="250" cy="320" r="3" fill="#D8C8A8"/>
+    <circle cx="250" cy="320" r="23" fill="none" stroke="#6B5E4E" stroke-width="2.5" opacity="0.5"/>
+  </g>
+  <!-- Wheel axle connections -->
+  <rect x="145" y="295" width="10" height="25" rx="3" fill="#A08968"/>
+  <rect x="245" y="295" width="10" height="25" rx="3" fill="#A08968"/>
+  <!-- === FOX TAIL (sticking out back) === -->
+  <path d="M275,250 Q310,240 320,215 Q325,205 318,200" fill="none" stroke="#D4A59E" stroke-width="12" stroke-linecap="round"/>
+  <path d="M318,200 Q312,195 316,198" fill="none" stroke="#F9F7F4" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+  <!-- Decorative elements -->
+  <ellipse cx="80" cy="280" rx="8" ry="3.5" fill="#89AC7B" opacity="0.2" transform="rotate(-15 80 280)"/>
+  <ellipse cx="335" cy="270" rx="7" ry="3" fill="#89AC7B" opacity="0.2" transform="rotate(20 335 270)"/>
+  <!-- Small green accent on handle -->
+  <ellipse cx="200" cy="72" rx="6" ry="2.5" fill="#89AC7B" opacity="0.5" transform="rotate(-10 200 72)"/>
+</svg>
