@@ -80,95 +80,98 @@ def research_page():
             search_service = AmazonSearchService(api_key=SERPAPI_KEY)
             analyzer = CompetitionAnalyzer()
 
-            progress_container.clear()
-            with progress_container:
-                progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
-                status_label = ui.label("Starting research...").classes("text-body2 text-secondary")
+            try:
+                progress_container.clear()
+                with progress_container:
+                    progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
+                    status_label = ui.label("Starting research...").classes("text-body2 text-secondary")
 
-            total = len(ids)
-            completed = 0
-            errors = 0
+                total = len(ids)
+                completed = 0
+                errors = 0
 
-            for pid in ids:
-                session = get_session()
-                try:
-                    product = session.query(Product).filter(Product.id == pid).first()
-                    if not product:
-                        continue
-
-                    query = product.amazon_search_query or product.name
-                    status_label.text = f"Searching Amazon for: {query}"
-                    log_area.push(f"[{datetime.now().strftime('%H:%M:%S')}] Searching: {query}")
-
+                for pid in ids:
+                    session = get_session()
                     try:
-                        results = search_service.search_products(query)
-                        analysis = analyzer.analyze(results["competitors"])
+                        product = session.query(Product).filter(Product.id == pid).first()
+                        if not product:
+                            continue
 
-                        search_session = SearchSession(
-                            product_id=product.id,
-                            search_query=query,
-                            amazon_domain="amazon.com",
-                            total_results=results["total_organic"] + results["total_sponsored"],
-                            organic_results=results["total_organic"],
-                            sponsored_results=results["total_sponsored"],
-                            avg_price=analysis["price_mean"],
-                            avg_rating=analysis["avg_rating"],
-                            avg_reviews=analysis["avg_reviews"],
-                        )
-                        session.add(search_session)
-                        session.flush()
+                        query = product.amazon_search_query or product.name
+                        status_label.text = f"Searching Amazon for: {query}"
+                        log_area.push(f"[{datetime.now().strftime('%H:%M:%S')}] Searching: {query}")
 
-                        for comp in results["competitors"]:
-                            amazon_comp = AmazonCompetitor(
+                        try:
+                            results = search_service.search_products(query)
+                            analysis = analyzer.analyze(results["competitors"])
+
+                            search_session = SearchSession(
                                 product_id=product.id,
-                                search_session_id=search_session.id,
-                                asin=comp.get("asin", ""),
-                                title=comp.get("title"),
-                                price=comp.get("price"),
-                                rating=comp.get("rating"),
-                                review_count=comp.get("review_count"),
-                                bought_last_month=comp.get("bought_last_month"),
-                                is_prime=comp.get("is_prime", False),
-                                badge=comp.get("badge"),
-                                thumbnail_url=comp.get("thumbnail_url"),
-                                amazon_url=comp.get("amazon_url"),
-                                is_sponsored=comp.get("is_sponsored", False),
-                                position=comp.get("position"),
+                                search_query=query,
+                                amazon_domain="amazon.com",
+                                total_results=results["total_organic"] + results["total_sponsored"],
+                                organic_results=results["total_organic"],
+                                sponsored_results=results["total_sponsored"],
+                                avg_price=analysis["price_mean"],
+                                avg_rating=analysis["avg_rating"],
+                                avg_reviews=analysis["avg_reviews"],
                             )
-                            session.add(amazon_comp)
+                            session.add(search_session)
+                            session.flush()
 
-                        session.commit()
+                            for comp in results["competitors"]:
+                                amazon_comp = AmazonCompetitor(
+                                    product_id=product.id,
+                                    search_session_id=search_session.id,
+                                    asin=comp.get("asin", ""),
+                                    title=comp.get("title"),
+                                    price=comp.get("price"),
+                                    rating=comp.get("rating"),
+                                    review_count=comp.get("review_count"),
+                                    bought_last_month=comp.get("bought_last_month"),
+                                    is_prime=comp.get("is_prime", False),
+                                    badge=comp.get("badge"),
+                                    thumbnail_url=comp.get("thumbnail_url"),
+                                    amazon_url=comp.get("amazon_url"),
+                                    is_sponsored=comp.get("is_sponsored", False),
+                                    position=comp.get("position"),
+                                )
+                                session.add(amazon_comp)
 
-                        log_area.push(
-                            f"  -> Found {results['total_organic']} organic results. "
-                            f"Opportunity: {analysis['opportunity_score']:.0f}/100, "
-                            f"Competition: {analysis['competition_score']:.0f}/100"
-                        )
+                            session.commit()
 
-                    except AmazonSearchError as e:
-                        errors += 1
-                        log_area.push(f"  -> ERROR: {e}")
-                        session.rollback()
+                            log_area.push(
+                                f"  -> Found {results['total_organic']} organic results. "
+                                f"Opportunity: {analysis['opportunity_score']:.0f}/100, "
+                                f"Competition: {analysis['competition_score']:.0f}/100"
+                            )
 
-                finally:
-                    session.close()
+                        except AmazonSearchError as e:
+                            errors += 1
+                            log_area.push(f"  -> ERROR: {e}")
+                            session.rollback()
 
-                completed += 1
-                progress.value = completed / total
-                await asyncio.sleep(1.5)
+                    finally:
+                        session.close()
 
-            status_label.text = f"Research complete! {completed - errors}/{total} products analyzed."
-            if errors:
-                status_label.text += f" ({errors} errors)"
+                    completed += 1
+                    progress.value = completed / total
+                    await asyncio.sleep(1.5)
 
-            log_area.push(
-                f"\n[{datetime.now().strftime('%H:%M:%S')}] Done! "
-                f"{completed - errors} successful, {errors} errors."
-            )
-            ui.notify(
-                f"Research complete! {completed - errors}/{total} products analyzed.",
-                type="positive",
-            )
+                status_label.text = f"Research complete! {completed - errors}/{total} products analyzed."
+                if errors:
+                    status_label.text += f" ({errors} errors)"
+
+                log_area.push(
+                    f"\n[{datetime.now().strftime('%H:%M:%S')}] Done! "
+                    f"{completed - errors} successful, {errors} errors."
+                )
+                ui.notify(
+                    f"Research complete! {completed - errors}/{total} products analyzed.",
+                    type="positive",
+                )
+            except RuntimeError:
+                return
 
         with ui.row().classes("gap-3 mt-2"):
             ui.button(

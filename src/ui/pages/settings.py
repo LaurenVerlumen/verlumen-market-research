@@ -4,6 +4,7 @@ import os
 from nicegui import ui
 
 from config import BASE_DIR, SERPAPI_KEY
+from src.models import Category, Product, get_session
 from src.services import AmazonSearchService
 from src.ui.layout import build_layout
 
@@ -103,6 +104,83 @@ def settings_page():
                 "flat color=grey"
             ).classes("mt-2")
 
+        # Category Management
+        with ui.card().classes("w-full p-4 mb-4"):
+            ui.label("Category Management").classes("text-subtitle1 font-bold mb-2")
+            ui.label(
+                "Manage product categories. Rename categories to fix typos, "
+                "or delete unused ones."
+            ).classes("text-body2 text-secondary mb-3")
+
+            category_container = ui.column().classes("w-full")
+
+            def refresh_categories():
+                """Reload the category list from the database."""
+                category_container.clear()
+                session = get_session()
+                try:
+                    categories = session.query(Category).order_by(Category.name).all()
+                    with category_container:
+                        if not categories:
+                            ui.label("No categories found.").classes(
+                                "text-body2 text-secondary"
+                            )
+                        for cat in categories:
+                            product_count = (
+                                session.query(Product)
+                                .filter_by(category_id=cat.id)
+                                .count()
+                            )
+                            _build_category_row(
+                                cat.id, cat.name, product_count, refresh_categories
+                            )
+
+                        # Add new category section
+                        with ui.row().classes("items-center gap-2 mt-3 w-full"):
+                            new_cat_input = ui.input(
+                                label="New category name",
+                                placeholder="Enter category name",
+                            ).classes("flex-grow")
+
+                            def add_category(inp=new_cat_input):
+                                name = inp.value.strip()
+                                if not name:
+                                    ui.notify(
+                                        "Category name cannot be empty.",
+                                        type="warning",
+                                    )
+                                    return
+                                sess = get_session()
+                                try:
+                                    existing = (
+                                        sess.query(Category)
+                                        .filter_by(name=name)
+                                        .first()
+                                    )
+                                    if existing:
+                                        ui.notify(
+                                            f"Category '{name}' already exists.",
+                                            type="warning",
+                                        )
+                                        return
+                                    sess.add(Category(name=name))
+                                    sess.commit()
+                                    ui.notify(
+                                        f"Category '{name}' added.",
+                                        type="positive",
+                                    )
+                                    refresh_categories()
+                                finally:
+                                    sess.close()
+
+                            ui.button("Add", icon="add", on_click=add_category).props(
+                                "color=primary"
+                            )
+                finally:
+                    session.close()
+
+            refresh_categories()
+
         # About
         with ui.card().classes("w-full p-4"):
             ui.label("About").classes("text-subtitle1 font-bold mb-2")
@@ -138,3 +216,108 @@ def _update_env_file(key: str, value: str):
         new_lines.append(f"{key}={value}")
 
     ENV_FILE.write_text("\n".join(new_lines) + "\n")
+
+
+def _build_category_row(cat_id: int, cat_name: str, product_count: int, on_refresh):
+    """Build a single category row with rename and delete controls."""
+    row = ui.row().classes("items-center gap-2 w-full py-1")
+
+    with row:
+        # Display mode: name label + product count + action buttons
+        name_label = ui.label(cat_name).classes("text-body1 flex-grow")
+        count_badge = ui.label(
+            f"{product_count} product{'s' if product_count != 1 else ''}"
+        ).classes("text-body2 text-secondary")
+
+        # Edit (rename) mode elements - hidden initially
+        edit_input = ui.input(value=cat_name).classes("flex-grow")
+        edit_input.visible = False
+
+        def start_edit():
+            name_label.visible = False
+            count_badge.visible = False
+            edit_btn.visible = False
+            delete_btn.visible = False
+            edit_input.visible = True
+            edit_input.value = name_label.text
+
+        def finish_edit():
+            new_name = edit_input.value.strip()
+            if not new_name:
+                ui.notify("Category name cannot be empty.", type="warning")
+                return
+            if new_name == cat_name:
+                # No change, just restore display mode
+                _restore_display()
+                return
+            session = get_session()
+            try:
+                duplicate = (
+                    session.query(Category)
+                    .filter(Category.name == new_name, Category.id != cat_id)
+                    .first()
+                )
+                if duplicate:
+                    ui.notify(
+                        f"Category '{new_name}' already exists.", type="warning"
+                    )
+                    return
+                cat = session.query(Category).filter_by(id=cat_id).first()
+                if cat:
+                    cat.name = new_name
+                    session.commit()
+                    ui.notify(f"Renamed to '{new_name}'.", type="positive")
+                    on_refresh()
+            finally:
+                session.close()
+
+        def _restore_display():
+            name_label.visible = True
+            count_badge.visible = True
+            edit_btn.visible = True
+            delete_btn.visible = True
+            edit_input.visible = False
+
+        edit_input.on("keydown.enter", lambda: finish_edit())
+        edit_input.on("blur", lambda: finish_edit())
+
+        edit_btn = ui.button(icon="edit", on_click=start_edit).props(
+            "flat dense color=grey"
+        )
+
+        def delete_category():
+            session = get_session()
+            try:
+                cat = session.query(Category).filter_by(id=cat_id).first()
+                if cat:
+                    session.delete(cat)
+                    session.commit()
+                    ui.notify(f"Category '{cat_name}' deleted.", type="positive")
+                    on_refresh()
+            finally:
+                session.close()
+
+        if product_count == 0:
+            delete_btn = ui.button(
+                icon="delete",
+                on_click=lambda: ui.notify(
+                    f"Delete '{cat_name}'?",
+                    type="warning",
+                    actions=[
+                        {
+                            "label": "Confirm",
+                            "color": "negative",
+                            "handler": delete_category,
+                        },
+                        {"label": "Cancel", "color": "white"},
+                    ],
+                ),
+            ).props("flat dense color=negative")
+        else:
+            delete_btn = ui.button(icon="delete").props(
+                "flat dense color=grey disable"
+            )
+            delete_btn.tooltip(
+                f"Has {product_count} product{'s' if product_count != 1 else ''}"
+                " - cannot delete"
+            )

@@ -365,6 +365,10 @@ def products_page():
 
                         with ui.column().classes("flex-1 gap-1"):
                             ui.label(p.name).classes("text-subtitle1 font-bold")
+                            if p.alibaba_supplier:
+                                ui.label(f"Supplier: {p.alibaba_supplier}").classes(
+                                    "text-caption text-secondary"
+                                )
                             with ui.row().classes("gap-2 items-center flex-wrap"):
                                 ui.badge(
                                     p.category.name if p.category else "",
@@ -440,6 +444,10 @@ def products_page():
 
                             with ui.column().classes("flex-1 gap-0"):
                                 ui.label(p.name).classes("text-subtitle2 font-bold")
+                                if p.alibaba_supplier:
+                                    ui.label(f"Supplier: {p.alibaba_supplier}").classes(
+                                        "text-caption text-secondary"
+                                    )
                                 with ui.row().classes("gap-2 items-center"):
                                     ui.badge(
                                         p.category.name if p.category else "",

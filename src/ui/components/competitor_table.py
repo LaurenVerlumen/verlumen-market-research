@@ -33,6 +33,25 @@ def competitor_table(competitors: list[dict], title: str = "Amazon Competitors")
         ).classes("w-full")
         table.props("flat bordered dense")
 
+        table.add_slot('body-cell-title', r'''
+            <q-td :props="props">
+                <a v-if="props.row.amazon_url" :href="props.row.amazon_url" target="_blank"
+                   class="text-primary" style="text-decoration:none">
+                    {{ props.value }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                </a>
+                <span v-else>{{ props.value }}</span>
+            </q-td>
+        ''')
+
+        table.add_slot('body-cell-asin', r'''
+            <q-td :props="props">
+                <a :href="'https://amazon.com/dp/' + props.value" target="_blank"
+                   class="text-primary" style="text-decoration:none">
+                    {{ props.value }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                </a>
+            </q-td>
+        ''')
+
 
 def _prepare_rows(competitors: list[dict]) -> list[dict]:
     rows = []
@@ -48,6 +67,7 @@ def _prepare_rows(competitors: list[dict]) -> list[dict]:
             "bought_last_month": c.get("bought_last_month") or "-",
             "is_prime": "Yes" if c.get("is_prime") else "No",
             "badge": c.get("badge") or "-",
+            "amazon_url": c.get("amazon_url", ""),
         })
     return rows
 

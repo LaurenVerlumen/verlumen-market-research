@@ -204,8 +204,25 @@ def product_detail_page(product_id: int):
                                         product.alibaba_price_max,
                                     ),
                                 )
-                            if product.alibaba_supplier:
-                                _info_row("Supplier", product.alibaba_supplier)
+                            ui.label("Supplier / Factory").classes(
+                                "text-caption text-secondary font-medium"
+                            )
+                            supplier_input = ui.input(
+                                value=product.alibaba_supplier or "",
+                                placeholder="Enter supplier name...",
+                            ).props("dense outlined").classes("text-body2")
+
+                            def _save_supplier(e, pid=product.id):
+                                db = get_session()
+                                try:
+                                    p = db.query(Product).filter(Product.id == pid).first()
+                                    if p:
+                                        p.alibaba_supplier = e.sender.value.strip() or None
+                                        db.commit()
+                                finally:
+                                    db.close()
+
+                            supplier_input.on("blur", _save_supplier)
                             if product.alibaba_moq:
                                 _info_row("MOQ", str(product.alibaba_moq))
                             if product.notes:
