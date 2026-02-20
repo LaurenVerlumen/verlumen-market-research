@@ -37,7 +37,7 @@ def export_page():
             )
             ui.button(
                 "Import Excel", icon="upload_file",
-                on_click=lambda: ui.navigate.to("/import"),
+                on_click=lambda: ui.navigate.to("/products"),
             ).props("color=primary")
             return
 

@@ -4,11 +4,8 @@ from nicegui import app, ui
 from config import APP_TITLE, APP_PORT, IMAGES_DIR
 from src.models import init_db
 from src.ui.pages.dashboard import dashboard_page
-from src.ui.pages.import_page import import_page
 from src.ui.pages.products import products_page
 from src.ui.pages.product_detail import product_detail_page
-from src.ui.pages.research import research_page
-from src.ui.pages.evaluation import evaluation_page
 from src.ui.pages.export_page import export_page
 from src.ui.pages.settings import settings_page
 
@@ -24,11 +21,6 @@ def index():
     dashboard_page()
 
 
-@ui.page("/import")
-def import_view():
-    import_page()
-
-
 @ui.page("/products")
 def products_view():
     products_page()
@@ -39,16 +31,6 @@ def product_detail_view(product_id: int):
     product_detail_page(product_id)
 
 
-@ui.page("/research")
-def research_view():
-    research_page()
-
-
-@ui.page("/evaluation")
-def evaluation_view():
-    evaluation_page()
-
-
 @ui.page("/export")
 def export_view():
     export_page()
@@ -57,6 +39,22 @@ def export_view():
 @ui.page("/settings")
 def settings_view():
     settings_page()
+
+
+# Backward-compatibility redirects for old bookmarks
+@ui.page("/import")
+def import_redirect():
+    ui.navigate.to("/products")
+
+
+@ui.page("/research")
+def research_redirect():
+    ui.navigate.to("/products")
+
+
+@ui.page("/evaluation")
+def evaluation_redirect():
+    ui.navigate.to("/products")
 
 
 ui.run(

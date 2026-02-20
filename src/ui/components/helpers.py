@@ -1,6 +1,23 @@
 """Shared UI helper functions for product display."""
 
 
+# Product status badge colors and labels (shared across pages)
+STATUS_COLORS = {
+    "imported": "grey-5",
+    "researched": "blue",
+    "under_review": "warning",
+    "approved": "positive",
+    "rejected": "negative",
+}
+STATUS_LABELS = {
+    "imported": "Imported",
+    "researched": "Researched",
+    "under_review": "Under Review",
+    "approved": "Approved",
+    "rejected": "Rejected",
+}
+
+
 # Predefined palette for letter-avatar backgrounds
 AVATAR_COLORS = [
     "#E57373", "#F06292", "#BA68C8", "#9575CD", "#7986CB",

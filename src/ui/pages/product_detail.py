@@ -18,7 +18,10 @@ from src.services.sp_api_client import SPAPIClient
 from src.services.xray_importer import XrayImporter
 from src.services.match_scorer import score_matches
 from src.services.utils import parse_bought
-from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src, format_price as _format_price
+from src.ui.components.helpers import (
+    avatar_color as _avatar_color, product_image_src as _product_image_src,
+    format_price as _format_price, STATUS_COLORS as _STATUS_COLORS, STATUS_LABELS as _STATUS_LABELS,
+)
 from src.services.viability_scorer import calculate_vvs
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
@@ -105,6 +108,44 @@ def product_detail_page(product_id: int):
                     "Delete Product", icon="delete", on_click=_show_delete_dialog,
                 ).props("color=negative outline")
 
+            # Status action bar
+            with ui.row().classes("items-center gap-2 w-full"):
+                _st = product.status or "imported"
+                ui.badge(
+                    _STATUS_LABELS.get(_st, _st.replace("_", " ").title()),
+                    color=_STATUS_COLORS.get(_st, "grey-5"),
+                ).classes("text-body2")
+
+                ui.space()
+
+                def _set_status(new_status):
+                    db = get_session()
+                    try:
+                        p = db.query(Product).filter(Product.id == product_id).first()
+                        if p:
+                            p.status = new_status
+                            db.commit()
+                            ui.notify(
+                                f"Status → {_STATUS_LABELS.get(new_status, new_status)}",
+                                type="positive",
+                            )
+                            ui.navigate.to(f"/products/{product_id}")
+                    finally:
+                        db.close()
+
+                ui.button(
+                    "Approve", icon="check_circle",
+                    on_click=lambda: _set_status("approved"),
+                ).props("color=positive size=sm")
+                ui.button(
+                    "Reject", icon="cancel",
+                    on_click=lambda: _set_status("rejected"),
+                ).props("color=negative size=sm outline")
+                ui.button(
+                    "Mark for Review", icon="rate_review",
+                    on_click=lambda: _set_status("under_review"),
+                ).props("color=warning size=sm outline")
+
             # Product info card with image
             with ui.card().classes("w-full p-4"):
                 with ui.row().classes("items-start gap-6 w-full"):
@@ -168,8 +209,8 @@ def product_detail_page(product_id: int):
 
                         # Manual image upload
                         async def _handle_image_upload(e):
-                            file_content = e.content.read()
-                            original_name = e.name
+                            file_content = await e.file.read()
+                            original_name = e.file.name
                             filename = await asyncio.get_event_loop().run_in_executor(
                                 None, save_uploaded_image, file_content, product_id, original_name,
                             )
@@ -499,14 +540,10 @@ def product_detail_page(product_id: int):
                         "No research data yet. Run Amazon Research or import a Helium 10 Xray file."
                     ).classes("text-body2 text-secondary")
                     with ui.row().classes("gap-2 flex-wrap items-center"):
-                        ui.button(
-                            "Run Research", icon="search",
-                            on_click=lambda: ui.navigate.to("/research"),
-                        ).props("color=positive")
                         rerun_btn = ui.button(
-                            "Run for this product", icon="refresh",
+                            "Run Research", icon="search",
                             on_click=_rerun_research,
-                        ).props("color=primary outline")
+                        ).props("color=positive")
                         rerun_status = ui.label("").classes(
                             "text-caption text-secondary self-center"
                         )
@@ -514,15 +551,17 @@ def product_detail_page(product_id: int):
                         # Xray import (creates a new session on the fly)
                         async def _handle_xray_no_session(e):
                             try:
-                                file_content = e.content.read()
-                                filename = e.name
+                                file_content = await e.file.read()
+                                filename = e.file.name
+                                ui.notify(f"Read {len(file_content)} bytes from {filename}", type="info")
                                 importer = XrayImporter()
                                 parsed = await asyncio.get_event_loop().run_in_executor(
                                     None, importer.parse_xray_file, file_content, filename,
                                 )
                                 if not parsed:
-                                    ui.notify("No valid rows in Xray file.", type="warning")
+                                    ui.notify(f"No valid ASIN rows found in {filename}. Check column names.", type="warning")
                                     return
+                                ui.notify(f"Parsed {len(parsed)} competitors from Xray", type="info")
                                 # Create a new search session for the Xray import
                                 db = get_session()
                                 try:
@@ -584,8 +623,8 @@ def product_detail_page(product_id: int):
                 async def _handle_xray_upload(e):
                     """Handle Helium 10 Xray Excel upload."""
                     try:
-                        file_content = e.content.read()
-                        filename = e.name
+                        file_content = await e.file.read()
+                        filename = e.file.name
                         xray_status.text = f"Importing {filename}..."
 
                         importer = XrayImporter()
@@ -720,6 +759,7 @@ def product_detail_page(product_id: int):
                                 "seller": c.seller,
                                 "fulfillment": c.fulfillment,
                                 "fba_fees": c.fba_fees,
+                                "weight": c.weight,
                             }
                             for c in comps
                         ]
@@ -832,6 +872,52 @@ def product_detail_page(product_id: int):
                             finally:
                                 db4.close()
 
+                        def _update_competitor_field(asin: str, field_name: str, raw_value):
+                            """Update any field on a competitor by ASIN."""
+                            _FIELD_MAP = {
+                                "price": ("price", float),
+                                "brand": ("brand", str),
+                                "seller": ("seller", str),
+                                "fulfillment": ("fulfillment", str),
+                                "rating": ("rating", float),
+                                "review_count": ("review_count", int),
+                                "bought_last_month": ("bought_last_month", str),
+                                "monthly_sales": ("monthly_sales", int),
+                                "monthly_revenue": ("monthly_revenue", float),
+                                "fba_fees": ("fba_fees", float),
+                                "is_prime": ("is_prime", bool),
+                                "weight": ("weight", float),
+                            }
+                            mapping = _FIELD_MAP.get(field_name)
+                            if not mapping:
+                                return
+                            col_name, cast_fn = mapping
+                            try:
+                                if raw_value is None or str(raw_value).strip() == "":
+                                    typed_value = None
+                                elif cast_fn == bool:
+                                    typed_value = raw_value in (True, "true", "True", "Yes", 1)
+                                else:
+                                    typed_value = cast_fn(raw_value)
+                            except (ValueError, TypeError):
+                                ui.notify(f"Invalid value for {field_name}", type="warning")
+                                return
+                            db5 = get_session()
+                            try:
+                                comp = (
+                                    db5.query(AmazonCompetitor)
+                                    .filter(
+                                        AmazonCompetitor.product_id == product_id,
+                                        AmazonCompetitor.asin == asin,
+                                    )
+                                    .first()
+                                )
+                                if comp:
+                                    setattr(comp, col_name, typed_value)
+                                    db5.commit()
+                            finally:
+                                db5.close()
+
                         # Reviewed progress summary
                         _reviewed_count = sum(1 for c in comp_data if c.get("reviewed"))
                         _total_comps = len(comp_data)
@@ -854,6 +940,7 @@ def product_detail_page(product_id: int):
                             on_bulk_delete=_bulk_delete_competitors,
                             on_score_change=_update_score,
                             on_review_toggle=_toggle_reviewed,
+                            on_field_change=_update_competitor_field,
                             pagination_state=_saved_pagination[0],
                             on_pagination_change=lambda p: _saved_pagination.__setitem__(0, p),
                         )

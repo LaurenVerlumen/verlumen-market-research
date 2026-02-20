@@ -10,10 +10,7 @@ app.add_static_files("/public", str(_PUBLIC_DIR))
 
 NAV_ITEMS = [
     {"label": "Dashboard", "icon": "dashboard", "path": "/"},
-    {"label": "Import Data", "icon": "upload_file", "path": "/import"},
     {"label": "Products", "icon": "inventory_2", "path": "/products"},
-    {"label": "Amazon Search", "icon": "search", "path": "/research"},
-    {"label": "Evaluation", "icon": "assessment", "path": "/evaluation"},
     {"label": "Export", "icon": "file_download", "path": "/export"},
     {"label": "Settings", "icon": "settings", "path": "/settings"},
 ]

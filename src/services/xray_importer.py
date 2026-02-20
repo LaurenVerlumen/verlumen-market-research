@@ -125,6 +125,11 @@ class XrayImporter:
             filename or "(bytes)", len(df), list(df.columns),
         )
 
+        # Build a flexible column map: normalize file columns to match our expected names
+        # This handles whitespace differences, extra spaces, etc.
+        self._resolved_col_map = self._resolve_columns(df.columns)
+        logger.info("Resolved column mapping: %s", self._resolved_col_map)
+
         parsed_rows: list[dict] = []
         for _, row in df.iterrows():
             record = self._map_row(row)
@@ -135,12 +140,37 @@ class XrayImporter:
         logger.info("Parsed %d valid rows from Xray file", len(parsed_rows))
         return parsed_rows
 
+    def _resolve_columns(self, file_columns) -> dict[str, str]:
+        """Build a map from actual file column names to our field names.
+
+        Handles variations in whitespace, casing, and minor naming differences
+        across Helium 10 Xray export versions.
+        """
+        resolved: dict[str, str] = {}
+
+        def _normalize(s: str) -> str:
+            """Collapse whitespace, lowercase, strip."""
+            return " ".join(s.lower().split())
+
+        # Build normalized lookup from our expected columns
+        expected_norm = {_normalize(xray_col): our_field for xray_col, our_field in _COLUMN_MAP.items()}
+
+        for file_col in file_columns:
+            norm = _normalize(str(file_col))
+            if norm in expected_norm:
+                resolved[str(file_col)] = expected_norm[norm]
+
+        return resolved
+
     def import_xray(self, product_id: int, session_id: int, parsed_data: list[dict]) -> dict:
         """Import Xray data into DB, cross-referencing existing competitors.
 
+        Looks up existing competitors by product_id + ASIN across ALL sessions
+        so that Xray data enriches SerpAPI results instead of creating duplicates.
+
         Args:
             product_id: The product ID to associate competitors with.
-            session_id: The search session ID to associate competitors with.
+            session_id: The search session ID for genuinely new competitors.
             parsed_data: List of dicts from parse_xray_file().
 
         Returns:
@@ -160,10 +190,11 @@ class XrayImporter:
                     continue
 
                 try:
+                    # Look across ALL sessions for this product to avoid duplicates
                     existing = (
                         db.query(AmazonCompetitor)
                         .filter(
-                            AmazonCompetitor.search_session_id == session_id,
+                            AmazonCompetitor.product_id == product_id,
                             AmazonCompetitor.asin == asin,
                         )
                         .first()
@@ -186,8 +217,23 @@ class XrayImporter:
                     errors.append(f"ASIN {asin}: {exc}")
                     logger.warning("Error importing ASIN %s: %s", asin, exc)
 
-            # Recalculate session stats
-            self._recalculate_session_stats(db, session_id)
+            # Recalculate stats for the xray session and any sessions that got enriched
+            affected_session_ids = {session_id}
+            for record in parsed_data:
+                asin = record.get("asin")
+                if asin:
+                    comp = (
+                        db.query(AmazonCompetitor)
+                        .filter(
+                            AmazonCompetitor.product_id == product_id,
+                            AmazonCompetitor.asin == asin,
+                        )
+                        .first()
+                    )
+                    if comp and comp.search_session_id:
+                        affected_session_ids.add(comp.search_session_id)
+            for sid in affected_session_ids:
+                self._recalculate_session_stats(db, sid)
 
             db.commit()
         except Exception as exc:
@@ -212,7 +258,8 @@ class XrayImporter:
         """Map a single pandas row to our field names with proper type parsing."""
         record: dict = {}
 
-        for xray_col, our_field in _COLUMN_MAP.items():
+        col_map = getattr(self, "_resolved_col_map", None) or _COLUMN_MAP
+        for xray_col, our_field in col_map.items():
             raw = row.get(xray_col)
             if _is_empty(raw):
                 continue
@@ -248,7 +295,8 @@ class XrayImporter:
             "monthly_sales", "monthly_revenue", "seller", "seller_country",
             "fba_fees", "review_velocity", "fulfillment", "active_sellers",
             "listing_created_at", "seller_age_months", "buy_box_owner",
-            "size_tier", "dimensions", "weight",
+            "size_tier", "dimensions", "weight", "brand", "bsr_rank",
+            "bsr_category",
         }
 
         for field, value in record.items():

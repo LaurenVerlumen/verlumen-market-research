@@ -1,31 +1,34 @@
 """Products page -- browse and manage imported products."""
 import asyncio
+import logging
+from datetime import datetime
+from pathlib import Path
 
 from nicegui import ui
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
-from config import SERPAPI_KEY
+from config import (
+    BASE_DIR, SERPAPI_KEY,
+    AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, SP_API_REFRESH_TOKEN,
+)
 from src.models import get_session, init_db, Category, Product, AmazonCompetitor, SearchSession
-from src.services import parse_alibaba_url, ImageFetcher, download_image
-from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src, format_price as _format_price
+from src.services import (
+    parse_alibaba_url, parse_excel, ImageFetcher, download_image,
+    AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
+)
+from src.services.match_scorer import score_matches
+from src.services.query_optimizer import optimize_query
+from src.ui.components.helpers import (
+    avatar_color as _avatar_color, product_image_src as _product_image_src,
+    format_price as _format_price, STATUS_COLORS as _STATUS_COLORS, STATUS_LABELS as _STATUS_LABELS,
+)
 from src.ui.layout import build_layout
 
-# Status badge colors
-_STATUS_COLORS = {
-    "imported": "grey-5",
-    "researched": "blue",
-    "under_review": "warning",
-    "approved": "positive",
-    "rejected": "negative",
-}
-_STATUS_LABELS = {
-    "imported": "Imported",
-    "researched": "Researched",
-    "under_review": "Under Review",
-    "approved": "Approved",
-    "rejected": "Rejected",
-}
+logger = logging.getLogger(__name__)
+
+# Default Excel file path (for import feature)
+_DEFAULT_EXCEL = BASE_DIR / "verlumen-Product Research.xlsx"
 
 
 def products_page():
@@ -38,7 +41,159 @@ def products_page():
             "text-body2 text-secondary mb-2"
         )
 
-        # --- Add Product Section ---
+        # ===================================================================
+        # Import from Excel section (merged from import_page.py)
+        # ===================================================================
+        with ui.expansion("Import from Excel", icon="upload_file").classes("w-full mb-4"):
+            import_status_container = ui.column().classes("w-full gap-2")
+            import_results_container = ui.column().classes("w-full gap-2")
+
+            def _do_import(data: list[dict]):
+                """Import parsed Excel data into the database."""
+                init_db()
+                session = get_session()
+                total_products = 0
+                skipped_names: list[str] = []
+                imported_names: list[str] = []
+
+                try:
+                    for group in data:
+                        cat_name = group["category"]
+                        category = session.query(Category).filter(Category.name == cat_name).first()
+                        if not category:
+                            category = Category(name=cat_name)
+                            session.add(category)
+                            session.flush()
+
+                        for prod in group["products"]:
+                            existing = session.query(Product).filter(
+                                Product.alibaba_url == prod["url"]
+                            ).first()
+                            if existing:
+                                skipped_names.append(prod["name"])
+                                continue
+
+                            product = Product(
+                                category_id=category.id,
+                                alibaba_url=prod["url"],
+                                alibaba_product_id=prod.get("product_id"),
+                                name=prod["name"],
+                                amazon_search_query=prod["name"],
+                                alibaba_supplier=prod.get("supplier"),
+                            )
+                            session.add(product)
+                            imported_names.append(prod["name"])
+                            total_products += 1
+
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    with import_status_container:
+                        ui.label(f"Error during import: {e}").classes("text-negative")
+                    return
+                finally:
+                    session.close()
+
+                import_results_container.clear()
+                with import_results_container:
+                    ui.label("Import complete!").classes("text-subtitle1 font-bold text-positive")
+                    with ui.row().classes("gap-4"):
+                        ui.label(f"Categories: {len(data)}").classes("text-body2")
+                        ui.label(f"Products imported: {total_products}").classes(
+                            "text-body2 text-positive"
+                        )
+                        if skipped_names:
+                            ui.label(
+                                f"Skipped (duplicates): {len(skipped_names)}"
+                            ).classes("text-body2 text-warning")
+
+                    if imported_names:
+                        with ui.expansion(
+                            f"New products ({len(imported_names)})", icon="check_circle",
+                        ).classes("w-full").props("default-opened"):
+                            for name in imported_names:
+                                with ui.row().classes("items-center gap-1 ml-4"):
+                                    ui.icon("check_circle", size="xs").classes("text-positive")
+                                    ui.label(name).classes("text-body2")
+
+                    if skipped_names:
+                        with ui.expansion(
+                            f"Skipped duplicates ({len(skipped_names)})", icon="content_copy",
+                        ).classes("w-full"):
+                            for name in skipped_names:
+                                with ui.row().classes("items-center gap-1 ml-4"):
+                                    ui.icon("block", size="xs").classes("text-warning")
+                                    ui.label(name).classes("text-body2 text-secondary")
+
+                # Refresh the product listing
+                try:
+                    refresh_products()
+                except Exception:
+                    pass
+                ui.notify(
+                    f"Imported {total_products} product(s).",
+                    type="positive",
+                )
+
+            # Import default file button
+            file_exists = _DEFAULT_EXCEL.exists()
+            if file_exists:
+                ui.label(f"Default file: {_DEFAULT_EXCEL.name}").classes(
+                    "text-body2 text-secondary mb-2"
+                )
+
+                def _import_default():
+                    import_status_container.clear()
+                    import_results_container.clear()
+                    with import_status_container:
+                        ui.label("Parsing Excel file...").classes("text-body2 text-primary")
+                    try:
+                        data = parse_excel(str(_DEFAULT_EXCEL))
+                        import_status_container.clear()
+                        _do_import(data)
+                    except Exception as e:
+                        import_status_container.clear()
+                        with import_status_container:
+                            ui.label(f"Error parsing file: {e}").classes("text-negative")
+
+                ui.button(
+                    "Import Default Spreadsheet", icon="upload_file",
+                    on_click=_import_default,
+                ).props("color=primary")
+            else:
+                ui.label(
+                    f"Default file not found at: {_DEFAULT_EXCEL}"
+                ).classes("text-body2 text-warning")
+
+            ui.separator().classes("my-2")
+
+            # Upload custom file
+            ui.label("Or upload an Excel file").classes("text-subtitle2 font-bold mb-1")
+
+            async def _handle_upload(e):
+                import_status_container.clear()
+                import_results_container.clear()
+                with import_status_container:
+                    ui.label("Parsing uploaded file...").classes("text-body2 text-primary")
+                try:
+                    file_content = await e.file.read()
+                    data = parse_excel(file_content)
+                    import_status_container.clear()
+                    _do_import(data)
+                except Exception as exc:
+                    import_status_container.clear()
+                    with import_status_container:
+                        ui.label(f"Error parsing upload: {exc}").classes("text-negative")
+
+            ui.upload(
+                label="Choose Excel file",
+                auto_upload=True,
+                on_upload=_handle_upload,
+            ).props('accept=".xlsx" max-file-size=10485760').classes("w-full")
+
+        # ===================================================================
+        # Add Product Manually section
+        # ===================================================================
         with ui.expansion("Add Product Manually", icon="add_circle").classes("w-full mb-4"):
             url_input = ui.input(
                 label="Alibaba URL",
@@ -190,7 +345,7 @@ def products_page():
                 ).props("outlined dense").classes("w-48")
 
                 status_select = ui.select(
-                    ["All", "Researched", "Pending"],
+                    ["All", "Imported", "Researched", "Under Review", "Approved", "Rejected"],
                     value="All",
                     label="Research Status",
                 ).props("outlined dense").classes("w-48")
@@ -381,6 +536,16 @@ def products_page():
                 bulk_delete_btn = ui.button(
                     "Delete Selected", icon="delete",
                 ).props("color=negative size=sm outline")
+                # --- Evaluation action buttons (merged from evaluation.py) ---
+                bulk_approve_btn = ui.button(
+                    "Approve Selected", icon="check_circle",
+                ).props("color=positive size=sm")
+                bulk_reject_btn = ui.button(
+                    "Reject Selected", icon="cancel",
+                ).props("color=negative size=sm outline")
+                bulk_review_btn = ui.button(
+                    "Mark for Review", icon="rate_review",
+                ).props("color=warning size=sm outline")
 
             def _update_bulk_bar():
                 count = len(bulk_selected)
@@ -416,12 +581,289 @@ def products_page():
                     bulk_selected.discard(pid)
                 _update_bulk_bar()
 
-            def _bulk_research():
+            # ---------------------------------------------------------------
+            # Bulk status change handler (merged from evaluation.py)
+            # ---------------------------------------------------------------
+            def _bulk_set_status(new_status: str):
+                """Set the status of all selected products."""
                 if not bulk_selected:
                     ui.notify("No products selected.", type="warning")
                     return
-                ids_param = ",".join(str(i) for i in bulk_selected)
-                ui.navigate.to(f"/research?ids={ids_param}")
+                count = len(bulk_selected)
+                db = get_session()
+                try:
+                    for pid in list(bulk_selected):
+                        p = db.query(Product).filter(Product.id == pid).first()
+                        if p:
+                            p.status = new_status
+                    db.commit()
+                finally:
+                    db.close()
+                bulk_selected.clear()
+                _update_bulk_bar()
+                refresh_products()
+                ui.notify(
+                    f"Updated {count} product(s) to {_STATUS_LABELS.get(new_status, new_status)}.",
+                    type="positive",
+                )
+
+            bulk_approve_btn.on_click(lambda: _bulk_set_status("approved"))
+            bulk_reject_btn.on_click(lambda: _bulk_set_status("rejected"))
+            bulk_review_btn.on_click(lambda: _bulk_set_status("under_review"))
+
+            # ---------------------------------------------------------------
+            # Inline batch research (merged from research.py)
+            # ---------------------------------------------------------------
+            async def _bulk_research():
+                """Run Amazon research for selected products inline with a progress dialog."""
+                if not bulk_selected:
+                    ui.notify("No products selected.", type="warning")
+                    return
+
+                if not SERPAPI_KEY:
+                    ui.notify("SERPAPI_KEY is not configured.", type="negative")
+                    return
+
+                ids = list(bulk_selected)
+
+                with ui.dialog() as research_dialog, ui.card().classes("w-full").style("min-width: 600px"):
+                    ui.label("Research Progress").classes("text-subtitle1 font-bold mb-2")
+                    progress = ui.linear_progress(value=0, show_value=False).classes("w-full")
+                    with ui.row().classes("items-center gap-3 mt-1"):
+                        current_thumb = ui.element("div").classes("w-10 h-10")
+                        status_label = ui.label(
+                            f"Starting research for {len(ids)} products..."
+                        ).classes("text-body2 text-secondary")
+                    log_area = ui.log(max_lines=100).classes("w-full h-64 mt-2")
+
+                research_dialog.open()
+
+                search_service = AmazonSearchService(api_key=SERPAPI_KEY)
+                analyzer = CompetitionAnalyzer()
+
+                log_area.push(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Starting research for {len(ids)} product(s)..."
+                )
+
+                total = len(ids)
+                completed = 0
+                errors = 0
+                total_competitors_found = 0
+                cache_hits = 0
+                results: dict = {}
+
+                for pid in ids:
+                    db = get_session()
+                    try:
+                        product = (
+                            db.query(Product)
+                            .options(joinedload(Product.category))
+                            .filter(Product.id == pid)
+                            .first()
+                        )
+                        if not product:
+                            completed += 1
+                            progress.value = completed / total
+                            continue
+
+                        query = product.amazon_search_query or optimize_query(product.name) or product.name
+
+                        # Auto-detect Amazon department from category
+                        dept = AMAZON_DEPARTMENT_DEFAULT
+                        if product.category:
+                            cat_lower = product.category.name.lower()
+                            dept = AMAZON_DEPARTMENT_MAP.get(cat_lower, AMAZON_DEPARTMENT_DEFAULT)
+
+                        # Update current product display
+                        current_thumb.clear()
+                        with current_thumb:
+                            img_src = _product_image_src(product)
+                            if img_src:
+                                ui.image(img_src).classes("w-10 h-10 rounded object-cover")
+                            else:
+                                letter = product.name[0].upper() if product.name else "?"
+                                ui.avatar(
+                                    letter,
+                                    color=_avatar_color(product.name),
+                                    text_color="white",
+                                    size="40px",
+                                )
+
+                        status_label.text = f"Searching ({completed + 1}/{total}): {product.name}"
+                        dept_label = f" [dept: {dept}]" if dept else ""
+                        log_area.push(
+                            f"[{datetime.now().strftime('%H:%M:%S')}] "
+                            f"Searching ({completed + 1}/{total}): {product.name}{dept_label}"
+                        )
+
+                        try:
+                            # Multi-page search with caching, dedup, department filter
+                            results = await asyncio.get_event_loop().run_in_executor(
+                                None,
+                                lambda q=query, d=dept: search_service.search_products(
+                                    q, max_pages=1, amazon_department=d,
+                                ),
+                            )
+                            all_competitors = results["competitors"]
+                            analysis = await asyncio.get_event_loop().run_in_executor(
+                                None, analyzer.analyze, all_competitors,
+                            )
+
+                            # Compute match scores
+                            scored = await asyncio.get_event_loop().run_in_executor(
+                                None,
+                                lambda: score_matches(product.name, [dict(c) for c in all_competitors]),
+                            )
+                            score_by_asin: dict[str, float | None] = {}
+                            for s in scored:
+                                a = s.get("asin")
+                                if a:
+                                    score_by_asin[a] = s.get("match_score")
+
+                            # SP-API brand enrichment (optional)
+                            brand_data: dict[str, dict] = {}
+                            if SP_API_REFRESH_TOKEN:
+                                try:
+                                    from src.services.sp_api_client import SPAPIClient
+                                    status_label.text = (
+                                        f"Enriching brand data ({completed + 1}/{total}): {product.name}"
+                                    )
+                                    sp_client = SPAPIClient()
+                                    unique_asins = list({
+                                        c.get("asin") for c in all_competitors if c.get("asin")
+                                    })
+                                    brand_data = await asyncio.get_event_loop().run_in_executor(
+                                        None, sp_client.enrich_asins, unique_asins,
+                                    )
+                                    log_area.push(
+                                        f"  -> Brand data enriched for {len(brand_data)} ASINs"
+                                    )
+                                except Exception as exc:
+                                    logger.warning("SP-API enrichment failed: %s", exc)
+                                    log_area.push(f"  -> SP-API enrichment skipped: {exc}")
+
+                            if results.get("cache_hit"):
+                                cache_hits += 1
+                                log_area.push("  -> (cached result)")
+
+                            comp_count = len(all_competitors)
+                            total_competitors_found += comp_count
+
+                            search_session = SearchSession(
+                                product_id=product.id,
+                                search_query=query,
+                                amazon_domain="amazon.com",
+                                total_results=results.get(
+                                    "total_results_across_pages", comp_count
+                                ),
+                                organic_results=results["total_organic"],
+                                sponsored_results=results["total_sponsored"],
+                                avg_price=analysis["price_mean"],
+                                avg_rating=analysis["avg_rating"],
+                                avg_reviews=analysis["avg_reviews"],
+                            )
+                            db.add(search_session)
+                            db.flush()
+
+                            seen_asins_in_session: set[str] = set()
+                            for comp in all_competitors:
+                                asin = comp.get("asin", "")
+                                if asin and asin in seen_asins_in_session:
+                                    continue
+                                if asin:
+                                    exists = (
+                                        db.query(AmazonCompetitor.id)
+                                        .filter(
+                                            AmazonCompetitor.product_id == product.id,
+                                            AmazonCompetitor.asin == asin,
+                                            AmazonCompetitor.search_session_id == search_session.id,
+                                        )
+                                        .first()
+                                    )
+                                    if exists:
+                                        continue
+                                    seen_asins_in_session.add(asin)
+                                amazon_comp = AmazonCompetitor(
+                                    product_id=product.id,
+                                    search_session_id=search_session.id,
+                                    asin=asin,
+                                    title=comp.get("title"),
+                                    price=comp.get("price"),
+                                    rating=comp.get("rating"),
+                                    review_count=comp.get("review_count"),
+                                    bought_last_month=comp.get("bought_last_month"),
+                                    is_prime=comp.get("is_prime", False),
+                                    badge=comp.get("badge"),
+                                    thumbnail_url=comp.get("thumbnail_url"),
+                                    amazon_url=comp.get("amazon_url"),
+                                    is_sponsored=comp.get("is_sponsored", False),
+                                    position=comp.get("position"),
+                                    match_score=score_by_asin.get(asin),
+                                    brand=brand_data.get(asin, {}).get("brand"),
+                                    manufacturer=brand_data.get(asin, {}).get("manufacturer"),
+                                )
+                                db.add(amazon_comp)
+
+                            # Auto-update product status to "researched"
+                            if product.status == "imported":
+                                product.status = "researched"
+
+                            db.commit()
+
+                            log_area.push(
+                                f"  -> Found {comp_count} competitors. "
+                                f"Opportunity: {analysis['opportunity_score']:.0f}/100, "
+                                f"Competition: {analysis['competition_score']:.0f}/100"
+                            )
+
+                        except (AmazonSearchError, Exception) as e:
+                            errors += 1
+                            logger.error("Research failed for product %d: %s", pid, e)
+                            log_area.push(f"  -> ERROR: {e}")
+                            db.rollback()
+
+                    finally:
+                        db.close()
+
+                    completed += 1
+                    progress.value = completed / total
+
+                    # Short sleep between products (cache hits don't need long waits)
+                    if not results.get("cache_hit"):
+                        await asyncio.sleep(0.5)
+
+                # --- Research summary ---
+                successful = completed - errors
+                avg_comps = total_competitors_found / successful if successful > 0 else 0
+
+                summary_text = (
+                    f"Research complete! {successful}/{total} products analyzed. "
+                    f"Total competitors: {total_competitors_found}, "
+                    f"avg per product: {avg_comps:.0f}"
+                )
+                if cache_hits:
+                    summary_text += f", cache hits: {cache_hits}"
+                if errors:
+                    summary_text += f" ({errors} errors)"
+
+                status_label.text = summary_text
+                log_area.push(
+                    f"\n[{datetime.now().strftime('%H:%M:%S')}] {summary_text}"
+                )
+
+                # Close dialog, clear selection, refresh
+                research_dialog.close()
+                bulk_selected.clear()
+                _update_bulk_bar()
+                try:
+                    refresh_products()
+                except RuntimeError:
+                    pass
+                ui.notify(
+                    f"Research complete! {successful}/{total} products analyzed.",
+                    type="positive",
+                )
 
             def _bulk_delete():
                 if not bulk_selected:
@@ -535,6 +977,15 @@ def products_page():
                 )
                 return {pid: cnt for pid, cnt in rows}
 
+            # Status filter value -> DB status value mapping
+            _STATUS_FILTER_MAP = {
+                "Imported": "imported",
+                "Researched": "researched",
+                "Under Review": "under_review",
+                "Approved": "approved",
+                "Rejected": "rejected",
+            }
+
             def _get_filtered_products(db, comp_counts: dict[int, int] | None = None):
                 """Query and filter products based on current filter state."""
                 if comp_counts is None:
@@ -564,11 +1015,15 @@ def products_page():
                 if search_term:
                     products = [p for p in products if search_term in p.name.lower()]
 
-                # Research status filter
-                if status_select.value == "Researched":
-                    products = [p for p in products if len(p.search_sessions) > 0]
-                elif status_select.value == "Pending":
-                    products = [p for p in products if len(p.search_sessions) == 0]
+                # Research status filter (expanded for evaluation statuses)
+                status_val = status_select.value
+                if status_val != "All":
+                    db_status = _STATUS_FILTER_MAP.get(status_val)
+                    if db_status:
+                        products = [
+                            p for p in products
+                            if (getattr(p, "status", None) or "imported") == db_status
+                        ]
 
                 # Competitor count range filter (using batch-loaded counts)
                 comp_val = comp_range_filter.value
@@ -877,5 +1332,3 @@ def _delete_button(product_id: int, product_name: str, on_deleted):
     ui.button(icon="delete", on_click=show_confirm).props(
         "flat round dense color=negative size=sm"
     ).tooltip("Delete product")
-
-

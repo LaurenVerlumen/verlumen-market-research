@@ -37,6 +37,7 @@ def competitor_table(
     on_bulk_delete=None,
     on_score_change=None,
     on_review_toggle=None,
+    on_field_change=None,
     pagination_state: dict | None = None,
     on_pagination_change=None,
 ):
@@ -59,6 +60,9 @@ def competitor_table(
     on_review_toggle : callable or None
         If provided, adds a "Seen" checkbox per row. Called with
         ``(asin: str, checked: bool)``.
+    on_field_change : callable or None
+        If provided, makes most columns inline-editable. Called with
+        ``(asin: str, field_name: str, new_value)``.
     pagination_state : dict or None
         Saved pagination state (page, rowsPerPage, sortBy, descending) to
         restore after a refresh.  When *None* defaults are computed.
@@ -320,47 +324,148 @@ def competitor_table(
                 </q-td>
             ''')
 
-        # --- Price cell (formatted from raw) ---
-        table.add_slot('body-cell-price', r'''
-            <q-td :props="props">
-                <span v-if="props.row.price_raw != null">
-                    ${{ props.row.price_raw.toFixed(2) }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        # --- Price cell ---
+        if on_field_change:
+            table.add_slot('body-cell-price', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.price_raw != null ? props.row.price_raw : ''"
+                        type="number"
+                        step="0.01"
+                        dense borderless
+                        input-class="text-right"
+                        style="width:80px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'price', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-price', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.price_raw != null">
+                        ${{ props.row.price_raw.toFixed(2) }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
 
-        # --- Rating cell (formatted from raw) ---
-        table.add_slot('body-cell-rating', r'''
-            <q-td :props="props">
-                <span v-if="props.row.rating_raw != null">
-                    {{ props.row.rating_raw.toFixed(1) }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        # --- Brand cell ---
+        if on_field_change:
+            table.add_slot('body-cell-brand', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.brand || ''"
+                        type="text"
+                        dense borderless
+                        style="width:100px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'brand', value: val})"
+                    />
+                </q-td>
+            ''')
 
-        # --- Review count cell (formatted from raw) ---
-        table.add_slot('body-cell-review_count', r'''
-            <q-td :props="props">
-                <span v-if="props.row.review_count_raw > 0">
-                    {{ props.row.review_count_raw.toLocaleString() }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        # --- Seller cell ---
+        if on_field_change:
+            table.add_slot('body-cell-seller', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.seller || ''"
+                        type="text"
+                        dense borderless
+                        style="width:100px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'seller', value: val})"
+                    />
+                </q-td>
+            ''')
 
-        # --- Bought/Mo cell (display string, sorted by raw) ---
-        table.add_slot('body-cell-bought_last_month', r'''
-            <q-td :props="props">
-                <span v-if="props.row.bought_last_month && props.row.bought_last_month !== '-'">
-                    {{ props.row.bought_last_month }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        # --- Fulfillment cell ---
+        if on_field_change:
+            table.add_slot('body-cell-fulfillment', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.fulfillment || ''"
+                        type="text"
+                        dense borderless
+                        style="width:70px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'fulfillment', value: val})"
+                    />
+                </q-td>
+            ''')
 
-        # --- Estimated Revenue/Mo cell (color-coded) ---
+        # --- Rating cell ---
+        if on_field_change:
+            table.add_slot('body-cell-rating', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.rating_raw != null ? props.row.rating_raw : ''"
+                        type="number"
+                        step="0.1"
+                        max="5"
+                        dense borderless
+                        input-class="text-center"
+                        style="width:60px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'rating', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-rating', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.rating_raw != null">
+                        {{ props.row.rating_raw.toFixed(1) }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
+
+        # --- Review count cell ---
+        if on_field_change:
+            table.add_slot('body-cell-review_count', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.review_count_raw > 0 ? props.row.review_count_raw : ''"
+                        type="number"
+                        dense borderless
+                        input-class="text-right"
+                        style="width:70px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'review_count', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-review_count', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.review_count_raw > 0">
+                        {{ props.row.review_count_raw.toLocaleString() }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
+
+        # --- Bought/Mo cell ---
+        if on_field_change:
+            table.add_slot('body-cell-bought_last_month', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.bought_last_month && props.row.bought_last_month !== '-' ? props.row.bought_last_month : ''"
+                        type="text"
+                        dense borderless
+                        input-class="text-right"
+                        style="width:80px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'bought_last_month', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-bought_last_month', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.bought_last_month && props.row.bought_last_month !== '-'">
+                        {{ props.row.bought_last_month }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
+
+        # --- Estimated Revenue/Mo cell (color-coded, read-only -- derived value) ---
         table.add_slot('body-cell-est_revenue', r'''
             <q-td :props="props">
                 <span v-if="props.row.est_revenue_raw > 0"
@@ -375,45 +480,101 @@ def competitor_table(
             </q-td>
         ''')
 
-        # --- H10 Sales cell (formatted) ---
-        table.add_slot('body-cell-monthly_sales', r'''
-            <q-td :props="props">
-                <span v-if="props.row.monthly_sales_raw > 0"
-                      :style="{
-                          color: props.row.monthly_sales_raw >= 500 ? '#2e7d32' :
-                                 props.row.monthly_sales_raw >= 100 ? '#f57f17' : '#666',
-                          fontWeight: props.row.monthly_sales_raw >= 100 ? 'bold' : 'normal'
-                      }">
-                    {{ props.row.monthly_sales_raw.toLocaleString() }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        # --- H10 Sales cell ---
+        if on_field_change:
+            table.add_slot('body-cell-monthly_sales', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.monthly_sales_raw > 0 ? props.row.monthly_sales_raw : ''"
+                        type="number"
+                        dense borderless
+                        input-class="text-right"
+                        style="width:80px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'monthly_sales', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-monthly_sales', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.monthly_sales_raw > 0"
+                          :style="{
+                              color: props.row.monthly_sales_raw >= 500 ? '#2e7d32' :
+                                     props.row.monthly_sales_raw >= 100 ? '#f57f17' : '#666',
+                              fontWeight: props.row.monthly_sales_raw >= 100 ? 'bold' : 'normal'
+                          }">
+                        {{ props.row.monthly_sales_raw.toLocaleString() }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
 
-        # --- H10 Revenue cell (formatted, color-coded) ---
-        table.add_slot('body-cell-monthly_revenue', r'''
-            <q-td :props="props">
-                <span v-if="props.row.monthly_revenue_raw > 0"
-                      :style="{
-                          color: props.row.monthly_revenue_raw >= 10000 ? '#2e7d32' :
-                                 props.row.monthly_revenue_raw >= 3000 ? '#f57f17' : '#666',
-                          fontWeight: props.row.monthly_revenue_raw >= 3000 ? 'bold' : 'normal'
-                      }">
-                    ${{ props.row.monthly_revenue_raw.toLocaleString(undefined, {maximumFractionDigits: 0}) }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        # --- H10 Revenue cell ---
+        if on_field_change:
+            table.add_slot('body-cell-monthly_revenue', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.monthly_revenue_raw > 0 ? props.row.monthly_revenue_raw : ''"
+                        type="number"
+                        dense borderless
+                        input-class="text-right"
+                        style="width:90px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'monthly_revenue', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-monthly_revenue', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.monthly_revenue_raw > 0"
+                          :style="{
+                              color: props.row.monthly_revenue_raw >= 10000 ? '#2e7d32' :
+                                     props.row.monthly_revenue_raw >= 3000 ? '#f57f17' : '#666',
+                              fontWeight: props.row.monthly_revenue_raw >= 3000 ? 'bold' : 'normal'
+                          }">
+                        ${{ props.row.monthly_revenue_raw.toLocaleString(undefined, {maximumFractionDigits: 0}) }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
 
         # --- FBA Fees cell ---
-        table.add_slot('body-cell-fba_fees', r'''
-            <q-td :props="props">
-                <span v-if="props.row.fba_fees_raw != null">
-                    ${{ props.row.fba_fees_raw.toFixed(2) }}
-                </span>
-                <span v-else style="color:#999">-</span>
-            </q-td>
-        ''')
+        if on_field_change:
+            table.add_slot('body-cell-fba_fees', r'''
+                <q-td :props="props">
+                    <q-input
+                        :model-value="props.row.fba_fees_raw != null ? props.row.fba_fees_raw : ''"
+                        type="number"
+                        step="0.01"
+                        dense borderless
+                        input-class="text-right"
+                        style="width:70px; display:inline-block"
+                        @change="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'fba_fees', value: val})"
+                    />
+                </q-td>
+            ''')
+        else:
+            table.add_slot('body-cell-fba_fees', r'''
+                <q-td :props="props">
+                    <span v-if="props.row.fba_fees_raw != null">
+                        ${{ props.row.fba_fees_raw.toFixed(2) }}
+                    </span>
+                    <span v-else style="color:#999">-</span>
+                </q-td>
+            ''')
+
+        # --- Prime cell ---
+        if on_field_change:
+            table.add_slot('body-cell-is_prime', r'''
+                <q-td :props="props">
+                    <q-checkbox
+                        :model-value="props.row.is_prime === 'Yes'"
+                        @update:model-value="val => $parent.$emit('fieldchange', {asin: props.row.asin, field: 'is_prime', value: val})"
+                        dense
+                        style="width:40px"
+                    />
+                </q-td>
+            ''')
 
         _thumb_html = r'''
             <q-avatar v-if="props.row.thumbnail_url" square size="36px" class="q-mr-sm cursor-pointer" style="flex-shrink:0">
@@ -508,6 +669,15 @@ def competitor_table(
                     on_score_change(asin, score)
 
             table.on("score", _handle_score)
+
+        # --- Generic field-change handler for inline editing ---
+        if on_field_change:
+            def _handle_field_change(e):
+                data = e.args
+                if isinstance(data, dict):
+                    on_field_change(data.get('asin', ''), data.get('field', ''), data.get('value'))
+
+            table.on('fieldchange', _handle_field_change)
 
 
 def _prepare_rows(competitors: list[dict]) -> list[dict]:
