@@ -12,6 +12,7 @@
   <img src="https://img.shields.io/badge/python-3.11+-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/NiceGUI-2.0+-green" alt="NiceGUI">
   <img src="https://img.shields.io/badge/SerpAPI-Amazon%20Search-orange" alt="SerpAPI">
+  <img src="https://img.shields.io/badge/scikit--learn-ML%20Intelligence-red?logo=scikitlearn&logoColor=white" alt="scikit-learn">
 </p>
 
 ---
@@ -38,9 +39,18 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 - **Alibaba URL Parsing** - Automatically extracts product names from Alibaba URLs
 - **Amazon Competition Search** - Uses SerpAPI to find competing products on Amazon.com
 - **Competition Scoring** - Automated 0-100 competition and opportunity scores
-- **Product Dashboard** - Browse products by category with competition metrics
+- **Product Dashboard** - Browse products by category with real thumbnails, search, filter, sort
+- **Product Images** - Auto-fetch via SerpAPI Google Images + manual upload, stored locally
 - **Excel Export** - 3-sheet report: Summary, Detailed Competitors, Category Analysis (with conditional formatting)
+- **Category Management** - Rename, add, delete categories from Settings
 - **SerpAPI Integration** - 100 free searches/month (more than enough for typical research)
+
+### ML-Powered Intelligence
+- **Smart Query Optimizer** - TF-IDF keyword extraction cleans Alibaba product names for better Amazon searches
+- **Product Match Scoring** - Cosine similarity ranks how relevant each Amazon competitor is (0-100)
+- **Price Recommender** - Budget/Competitive/Premium pricing strategies using K-means clustering
+- **Demand Estimator** - Parses "bought last month" data to estimate monthly revenue and market size
+- **AI Insights Dashboard** - ECharts price distribution, category comparison, top opportunity rankings
 
 ## Quick Start
 
@@ -87,6 +97,8 @@ Open your browser to **http://localhost:8080**
 | Web UI | [NiceGUI](https://nicegui.io) (Python) |
 | Database | SQLite + SQLAlchemy |
 | Amazon Data | [SerpAPI](https://serpapi.com) |
+| ML/AI | scikit-learn (TF-IDF, cosine similarity, K-means) |
+| Charts | ECharts via NiceGUI |
 | Excel | openpyxl + pandas |
 
 ## Project Structure
@@ -99,10 +111,15 @@ verlumenMarketResearch/
 ├── public/images/            # Verlumen logos
 ├── src/
 │   ├── models/               # SQLAlchemy models (4 tables)
-│   ├── services/             # Business logic
+│   ├── services/             # Business logic & ML
 │   │   ├── alibaba_parser    # URL parsing
 │   │   ├── amazon_search     # SerpAPI wrapper
 │   │   ├── competition_analyzer  # Scoring engine
+│   │   ├── query_optimizer   # TF-IDF query cleaning
+│   │   ├── match_scorer      # Cosine similarity scoring
+│   │   ├── price_recommender # K-means pricing strategies
+│   │   ├── demand_estimator  # Market demand analysis
+│   │   ├── image_fetcher     # Image download & upload
 │   │   ├── excel_importer    # Excel parsing
 │   │   └── excel_exporter    # Report generation
 │   └── ui/                   # NiceGUI pages & components
