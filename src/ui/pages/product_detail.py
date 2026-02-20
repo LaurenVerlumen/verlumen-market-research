@@ -7,6 +7,20 @@ from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
 
 
+# Predefined palette for letter-avatar backgrounds
+_AVATAR_COLORS = [
+    "#E57373", "#F06292", "#BA68C8", "#9575CD", "#7986CB",
+    "#64B5F6", "#4FC3F7", "#4DD0E1", "#4DB6AC", "#81C784",
+    "#AED581", "#DCE775", "#FFD54F", "#FFB74D", "#FF8A65",
+    "#A1887F", "#90A4AE",
+]
+
+
+def _avatar_color(name: str) -> str:
+    idx = ord(name[0].upper()) % len(_AVATAR_COLORS) if name else 0
+    return _AVATAR_COLORS[idx]
+
+
 def product_detail_page(product_id: int):
     """Render the product detail page."""
     content = build_layout()
@@ -20,31 +34,105 @@ def product_detail_page(product_id: int):
                 ui.button("Back to Products", on_click=lambda: ui.navigate.to("/products"))
                 return
 
-            # Header
-            with ui.row().classes("items-center gap-2"):
+            # Header with back button, product name, and delete
+            with ui.row().classes("items-center gap-2 w-full"):
                 ui.button(
                     icon="arrow_back", on_click=lambda: ui.navigate.to("/products"),
                 ).props("flat round")
-                ui.label(product.name).classes("text-h5 font-bold")
+                ui.label(product.name).classes("text-h5 font-bold flex-1")
 
-            # Product info card
+                def _show_delete_dialog():
+                    with ui.dialog() as dlg, ui.card():
+                        ui.label(f'Delete "{product.name}"?').classes(
+                            "text-subtitle1 font-bold"
+                        )
+                        ui.label(
+                            "Are you sure you want to delete this product? "
+                            "This will also delete all associated Amazon research data."
+                        ).classes("text-body2 text-secondary")
+                        with ui.row().classes("justify-end gap-2 mt-4"):
+                            ui.button("Cancel", on_click=dlg.close).props("flat")
+
+                            def _confirm():
+                                db = get_session()
+                                try:
+                                    p = db.query(Product).filter(
+                                        Product.id == product_id
+                                    ).first()
+                                    if p:
+                                        db.delete(p)
+                                        db.commit()
+                                finally:
+                                    db.close()
+                                dlg.close()
+                                ui.navigate.to("/products")
+
+                            ui.button("Delete", on_click=_confirm).props(
+                                "color=negative"
+                            )
+                    dlg.open()
+
+                ui.button(
+                    "Delete Product", icon="delete", on_click=_show_delete_dialog,
+                ).props("color=negative outline")
+
+            # Product info card with image
             with ui.card().classes("w-full p-4"):
-                ui.label("Product Information").classes("text-subtitle1 font-bold mb-2")
-                with ui.grid(columns=2).classes("gap-x-8 gap-y-2"):
-                    _info_row("Category", product.category.name if product.category else "N/A")
-                    _info_row("Alibaba Product ID", product.alibaba_product_id or "N/A")
-                    _info_row("Alibaba URL", product.alibaba_url, is_link=True)
-                    _info_row("Amazon Search Query", product.amazon_search_query or product.name)
-                    if product.alibaba_price_min or product.alibaba_price_max:
-                        _info_row("Alibaba Price", _format_price(
-                            product.alibaba_price_min, product.alibaba_price_max
-                        ))
-                    if product.alibaba_supplier:
-                        _info_row("Supplier", product.alibaba_supplier)
-                    if product.alibaba_moq:
-                        _info_row("MOQ", str(product.alibaba_moq))
-                    if product.notes:
-                        _info_row("Notes", product.notes)
+                with ui.row().classes("items-start gap-6 w-full"):
+                    # Product image / avatar placeholder
+                    if product.alibaba_image_url:
+                        ui.image(product.alibaba_image_url).classes(
+                            "w-32 h-32 rounded-lg object-cover"
+                        ).style("flex-shrink:0")
+                    else:
+                        letter = product.name[0].upper() if product.name else "?"
+                        bg = _avatar_color(product.name)
+                        ui.avatar(
+                            letter, color=bg, text_color="white", size="128px",
+                            font_size="48px",
+                        ).classes("rounded-lg")
+
+                    # Info grid
+                    with ui.column().classes("flex-1 gap-2"):
+                        ui.label("Product Information").classes(
+                            "text-subtitle1 font-bold mb-2"
+                        )
+                        with ui.grid(columns=2).classes("gap-x-8 gap-y-2"):
+                            _info_row(
+                                "Category",
+                                product.category.name if product.category else "N/A",
+                            )
+                            _info_row(
+                                "Alibaba Product ID",
+                                product.alibaba_product_id or "N/A",
+                            )
+                            _info_row(
+                                "Amazon Search Query",
+                                product.amazon_search_query or product.name,
+                            )
+                            if product.alibaba_price_min is not None or product.alibaba_price_max is not None:
+                                _info_row(
+                                    "Alibaba Price",
+                                    _format_price(
+                                        product.alibaba_price_min,
+                                        product.alibaba_price_max,
+                                    ),
+                                )
+                            if product.alibaba_supplier:
+                                _info_row("Supplier", product.alibaba_supplier)
+                            if product.alibaba_moq:
+                                _info_row("MOQ", str(product.alibaba_moq))
+                            if product.notes:
+                                _info_row("Notes", product.notes)
+
+                        # Prominent Alibaba link button
+                        if product.alibaba_url:
+                            with ui.link(
+                                target=product.alibaba_url, new_tab=True,
+                            ).classes("no-underline mt-2"):
+                                ui.button(
+                                    "View on Alibaba", icon="open_in_new",
+                                ).props("color=accent")
 
             # Amazon Competition Analysis
             latest_session = (
@@ -132,10 +220,10 @@ def _info_row(label: str, value: str, is_link: bool = False):
 
 
 def _format_price(pmin, pmax) -> str:
-    if pmin and pmax:
+    if pmin is not None and pmax is not None:
         return f"${pmin:.2f} - ${pmax:.2f}"
-    if pmin:
+    if pmin is not None:
         return f"${pmin:.2f}"
-    if pmax:
+    if pmax is not None:
         return f"${pmax:.2f}"
     return "N/A"

@@ -31,8 +31,8 @@ class Product(Base):
     )
 
     category = relationship("Category", back_populates="products")
-    amazon_competitors = relationship("AmazonCompetitor", back_populates="product")
-    search_sessions = relationship("SearchSession", back_populates="product")
+    amazon_competitors = relationship("AmazonCompetitor", back_populates="product", cascade="all, delete-orphan")
+    search_sessions = relationship("SearchSession", back_populates="product", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Product id={self.id} name={self.name!r}>"

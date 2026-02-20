@@ -32,7 +32,8 @@ def import_page():
             init_db()
             session = get_session()
             total_products = 0
-            skipped = 0
+            skipped_names: list[str] = []
+            imported_names: list[str] = []
 
             try:
                 for group in data:
@@ -48,7 +49,7 @@ def import_page():
                             Product.alibaba_url == prod["url"]
                         ).first()
                         if existing:
-                            skipped += 1
+                            skipped_names.append(prod["name"])
                             continue
 
                         product = Product(
@@ -59,6 +60,7 @@ def import_page():
                             amazon_search_query=prod["name"],
                         )
                         session.add(product)
+                        imported_names.append(prod["name"])
                         total_products += 1
 
                 session.commit()
@@ -75,16 +77,33 @@ def import_page():
                 ui.label("Import complete!").classes("text-subtitle1 font-bold text-positive")
                 with ui.row().classes("gap-4"):
                     ui.label(f"Categories: {len(data)}").classes("text-body2")
-                    ui.label(f"Products imported: {total_products}").classes("text-body2")
-                    if skipped:
-                        ui.label(f"Skipped (duplicates): {skipped}").classes("text-body2 text-warning")
+                    ui.label(f"Products imported: {total_products}").classes(
+                        "text-body2 text-positive"
+                    )
+                    if skipped_names:
+                        ui.label(
+                            f"Skipped (duplicates): {len(skipped_names)}"
+                        ).classes("text-body2 text-warning")
 
-                for group in data:
+                # Imported products
+                if imported_names:
                     with ui.expansion(
-                        f"{group['category']} ({len(group['products'])} products)", icon="category"
+                        f"New products ({len(imported_names)})", icon="check_circle",
+                    ).classes("w-full").props("default-opened"):
+                        for name in imported_names:
+                            with ui.row().classes("items-center gap-1 ml-4"):
+                                ui.icon("check_circle", size="xs").classes("text-positive")
+                                ui.label(name).classes("text-body2")
+
+                # Skipped duplicates
+                if skipped_names:
+                    with ui.expansion(
+                        f"Skipped duplicates ({len(skipped_names)})", icon="content_copy",
                     ).classes("w-full"):
-                        for p in group["products"]:
-                            ui.label(f"  - {p['name']}").classes("text-body2 text-secondary ml-4")
+                        for name in skipped_names:
+                            with ui.row().classes("items-center gap-1 ml-4"):
+                                ui.icon("block", size="xs").classes("text-warning")
+                                ui.label(name).classes("text-body2 text-secondary")
 
                 with ui.row().classes("gap-3 mt-2"):
                     ui.button(

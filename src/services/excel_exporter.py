@@ -294,6 +294,6 @@ class ExcelExporter:
 
     @staticmethod
     def _format_price_range(pmin: Any, pmax: Any) -> str:
-        if pmin and pmax:
+        if pmin is not None and pmax is not None:
             return f"${pmin:.2f} - ${pmax:.2f}"
         return ""
