@@ -103,9 +103,41 @@ def settings_page():
                 init_db()
                 ui.notify("Database tables recreated.", type="info")
 
-            ui.button("Recreate Tables", icon="refresh", on_click=reset_db).props(
-                "flat color=grey"
-            ).classes("mt-2")
+            def reset_research():
+                """Delete all research data (search sessions + competitors) but keep products."""
+                session = get_session()
+                try:
+                    from src.models import AmazonCompetitor, SearchSession
+                    count_comp = session.query(AmazonCompetitor).delete()
+                    count_sess = session.query(SearchSession).delete()
+                    session.commit()
+                    ui.notify(
+                        f"Research data cleared: {count_sess} sessions, "
+                        f"{count_comp} competitors deleted.",
+                        type="positive",
+                    )
+                except Exception as e:
+                    session.rollback()
+                    ui.notify(f"Error: {e}", type="negative")
+                finally:
+                    session.close()
+
+            with ui.row().classes("gap-2 mt-2"):
+                ui.button("Recreate Tables", icon="refresh", on_click=reset_db).props(
+                    "flat color=grey"
+                )
+                ui.button(
+                    "Reset All Research Data",
+                    icon="delete_sweep",
+                    on_click=lambda: ui.notify(
+                        "Delete ALL search sessions and competitor data? Products will be kept.",
+                        type="warning",
+                        actions=[
+                            {"label": "Confirm", "color": "negative", "handler": reset_research},
+                            {"label": "Cancel", "color": "white"},
+                        ],
+                    ),
+                ).props("flat color=negative")
 
         # Search Cache stats
         with ui.card().classes("w-full p-4 mb-4"):
