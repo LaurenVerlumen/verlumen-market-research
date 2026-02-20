@@ -17,6 +17,11 @@ COLUMNS = [
     {"name": "review_count", "label": "Reviews", "field": "review_count_raw", "sortable": True, "align": "right"},
     {"name": "bought_last_month", "label": "Bought/Mo", "field": "bought_raw", "sortable": True, "align": "right"},
     {"name": "est_revenue", "label": "Est. Rev/Mo", "field": "est_revenue_raw", "sortable": True, "align": "right"},
+    {"name": "monthly_sales", "label": "H10 Sales", "field": "monthly_sales_raw", "sortable": True, "align": "right"},
+    {"name": "monthly_revenue", "label": "H10 Revenue", "field": "monthly_revenue_raw", "sortable": True, "align": "right"},
+    {"name": "seller", "label": "Seller", "field": "seller", "sortable": True, "align": "left"},
+    {"name": "fulfillment", "label": "FBA/FBM", "field": "fulfillment", "sortable": True, "align": "center"},
+    {"name": "fba_fees", "label": "Fees", "field": "fba_fees_raw", "sortable": True, "align": "right"},
     {"name": "is_prime", "label": "Prime", "field": "is_prime", "align": "center"},
     {"name": "badge", "label": "Badge", "field": "badge", "align": "left"},
 ]
@@ -187,7 +192,7 @@ def competitor_table(
             for r in all_rows:
                 # Keyword filter
                 if kw:
-                    text = f"{r['title']} {r['asin']} {r['brand']}".lower()
+                    text = f"{r['title']} {r['asin']} {r['brand']} {r['seller']}".lower()
                     if not all(k in text for k in kw.split()):
                         continue
                 # Price filter
@@ -370,6 +375,46 @@ def competitor_table(
             </q-td>
         ''')
 
+        # --- H10 Sales cell (formatted) ---
+        table.add_slot('body-cell-monthly_sales', r'''
+            <q-td :props="props">
+                <span v-if="props.row.monthly_sales_raw > 0"
+                      :style="{
+                          color: props.row.monthly_sales_raw >= 500 ? '#2e7d32' :
+                                 props.row.monthly_sales_raw >= 100 ? '#f57f17' : '#666',
+                          fontWeight: props.row.monthly_sales_raw >= 100 ? 'bold' : 'normal'
+                      }">
+                    {{ props.row.monthly_sales_raw.toLocaleString() }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        # --- H10 Revenue cell (formatted, color-coded) ---
+        table.add_slot('body-cell-monthly_revenue', r'''
+            <q-td :props="props">
+                <span v-if="props.row.monthly_revenue_raw > 0"
+                      :style="{
+                          color: props.row.monthly_revenue_raw >= 10000 ? '#2e7d32' :
+                                 props.row.monthly_revenue_raw >= 3000 ? '#f57f17' : '#666',
+                          fontWeight: props.row.monthly_revenue_raw >= 3000 ? 'bold' : 'normal'
+                      }">
+                    ${{ props.row.monthly_revenue_raw.toLocaleString(undefined, {maximumFractionDigits: 0}) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
+        # --- FBA Fees cell ---
+        table.add_slot('body-cell-fba_fees', r'''
+            <q-td :props="props">
+                <span v-if="props.row.fba_fees_raw != null">
+                    ${{ props.row.fba_fees_raw.toFixed(2) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
+
         _thumb_html = r'''
             <q-avatar v-if="props.row.thumbnail_url" square size="36px" class="q-mr-sm cursor-pointer" style="flex-shrink:0">
                 <img :src="props.row.thumbnail_url" style="object-fit:contain" />
@@ -481,6 +526,11 @@ def _prepare_rows(competitors: list[dict]) -> list[dict]:
         if price is not None and bought_num is not None and bought_num > 0:
             est_revenue = price * bought_num
 
+        # Xray / Helium 10 fields
+        monthly_sales = c.get("monthly_sales")
+        monthly_revenue = c.get("monthly_revenue")
+        fba_fees = c.get("fba_fees")
+
         rows.append({
             "position": c.get("position", 0),
             "match_score_raw": score or 0,
@@ -493,6 +543,11 @@ def _prepare_rows(competitors: list[dict]) -> list[dict]:
             "bought_last_month": bought_str or "-",
             "bought_raw": bought_num or 0,
             "est_revenue_raw": est_revenue or 0,
+            "monthly_sales_raw": monthly_sales if monthly_sales is not None else 0,
+            "monthly_revenue_raw": monthly_revenue if monthly_revenue is not None else 0,
+            "seller": c.get("seller") or "-",
+            "fulfillment": c.get("fulfillment") or "-",
+            "fba_fees_raw": fba_fees,
             "is_prime": "Yes" if c.get("is_prime") else "No",
             "badge": c.get("badge") or "-",
             "amazon_url": c.get("amazon_url", ""),

@@ -13,6 +13,7 @@ from src.services.profit_calculator import calculate_profit
 from src.services.query_optimizer import optimize_query, suggest_queries
 from src.services.search_cache import SearchCache
 from src.services.viability_scorer import calculate_vvs
+from src.services.xray_importer import XrayImporter
 
 __all__ = [
     "parse_alibaba_url",
@@ -33,4 +34,5 @@ __all__ = [
     "calculate_fees",
     "calculate_vvs",
     "SearchCache",
+    "XrayImporter",
 ]

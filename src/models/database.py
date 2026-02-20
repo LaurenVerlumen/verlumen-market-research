@@ -64,6 +64,90 @@ def _migrate_columns():
                 conn.execute(text(
                     "ALTER TABLE amazon_competitors ADD COLUMN manufacturer TEXT"
                 ))
+        if "monthly_sales" not in columns:
+            logger.info("Adding monthly_sales column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN monthly_sales INTEGER"
+                ))
+        if "monthly_revenue" not in columns:
+            logger.info("Adding monthly_revenue column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN monthly_revenue FLOAT"
+                ))
+        if "seller" not in columns:
+            logger.info("Adding seller column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN seller TEXT"
+                ))
+        if "seller_country" not in columns:
+            logger.info("Adding seller_country column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN seller_country TEXT"
+                ))
+        if "fba_fees" not in columns:
+            logger.info("Adding fba_fees column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN fba_fees FLOAT"
+                ))
+        if "review_velocity" not in columns:
+            logger.info("Adding review_velocity column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN review_velocity FLOAT"
+                ))
+        if "fulfillment" not in columns:
+            logger.info("Adding fulfillment column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN fulfillment TEXT"
+                ))
+        if "active_sellers" not in columns:
+            logger.info("Adding active_sellers column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN active_sellers INTEGER"
+                ))
+        if "listing_created_at" not in columns:
+            logger.info("Adding listing_created_at column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN listing_created_at TEXT"
+                ))
+        if "seller_age_months" not in columns:
+            logger.info("Adding seller_age_months column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN seller_age_months INTEGER"
+                ))
+        if "buy_box_owner" not in columns:
+            logger.info("Adding buy_box_owner column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN buy_box_owner TEXT"
+                ))
+        if "size_tier" not in columns:
+            logger.info("Adding size_tier column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN size_tier TEXT"
+                ))
+        if "dimensions" not in columns:
+            logger.info("Adding dimensions column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN dimensions TEXT"
+                ))
+        if "weight" not in columns:
+            logger.info("Adding weight column to amazon_competitors table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE amazon_competitors ADD COLUMN weight FLOAT"
+                ))
 
 
 def _migrate_indexes():

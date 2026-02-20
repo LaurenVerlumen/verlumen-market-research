@@ -15,6 +15,7 @@ from src.services import (
     AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
 )
 from src.services.sp_api_client import SPAPIClient
+from src.services.xray_importer import XrayImporter
 from src.services.match_scorer import score_matches
 from src.services.utils import parse_bought
 from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src, format_price as _format_price
@@ -495,9 +496,9 @@ def product_detail_page(product_id: int):
                 with ui.card().classes("w-full p-4"):
                     ui.label("Amazon Competition Analysis").classes("text-subtitle1 font-bold mb-2")
                     ui.label(
-                        "No research data yet. Run Amazon Research to see competition analysis."
+                        "No research data yet. Run Amazon Research or import a Helium 10 Xray file."
                     ).classes("text-body2 text-secondary")
-                    with ui.row().classes("gap-2"):
+                    with ui.row().classes("gap-2 flex-wrap items-center"):
                         ui.button(
                             "Run Research", icon="search",
                             on_click=lambda: ui.navigate.to("/research"),
@@ -509,9 +510,66 @@ def product_detail_page(product_id: int):
                         rerun_status = ui.label("").classes(
                             "text-caption text-secondary self-center"
                         )
+
+                        # Xray import (creates a new session on the fly)
+                        async def _handle_xray_no_session(e):
+                            try:
+                                file_content = e.content.read()
+                                filename = e.name
+                                importer = XrayImporter()
+                                parsed = await asyncio.get_event_loop().run_in_executor(
+                                    None, importer.parse_xray_file, file_content, filename,
+                                )
+                                if not parsed:
+                                    ui.notify("No valid rows in Xray file.", type="warning")
+                                    return
+                                # Create a new search session for the Xray import
+                                db = get_session()
+                                try:
+                                    new_sess = SearchSession(
+                                        product_id=product.id,
+                                        search_query=f"Xray import: {filename}",
+                                        amazon_domain="amazon.com",
+                                        total_results=len(parsed),
+                                    )
+                                    db.add(new_sess)
+                                    db.flush()
+                                    sid = new_sess.id
+                                    db.commit()
+                                finally:
+                                    db.close()
+                                result = await asyncio.get_event_loop().run_in_executor(
+                                    None, importer.import_xray, product.id, sid, parsed,
+                                )
+                                enriched = result.get("enriched", 0)
+                                added = result.get("added", 0)
+                                ui.notify(
+                                    f"Xray imported: {enriched} enriched, {added} new competitors",
+                                    type="positive",
+                                )
+                                # Update product status
+                                db = get_session()
+                                try:
+                                    p = db.query(Product).filter(Product.id == product.id).first()
+                                    if p and p.status == "imported":
+                                        p.status = "researched"
+                                        db.commit()
+                                finally:
+                                    db.close()
+                                ui.navigate.to(f"/products/{product.id}")
+                            except Exception as exc:
+                                ui.notify(f"Xray import failed: {exc}", type="negative")
+
+                        ui.upload(
+                            label="Import Xray",
+                            auto_upload=True,
+                            on_upload=_handle_xray_no_session,
+                        ).props(
+                            'accept=".xlsx,.xls,.csv" max-file-size=10485760 flat dense color=accent'
+                        ).classes("w-40").style("font-size:12px")
                 return
 
-            # Metrics header with re-research button
+            # Metrics header with re-research + Xray upload buttons
             with ui.row().classes("items-center gap-4 w-full"):
                 ui.label("Amazon Competition Analysis").classes("text-subtitle1 font-bold")
                 rerun_btn = ui.button(
@@ -521,6 +579,58 @@ def product_detail_page(product_id: int):
                 rerun_status = ui.label("").classes(
                     "text-caption text-secondary"
                 )
+
+                # --- Xray import button ---
+                async def _handle_xray_upload(e):
+                    """Handle Helium 10 Xray Excel upload."""
+                    try:
+                        file_content = e.content.read()
+                        filename = e.name
+                        xray_status.text = f"Importing {filename}..."
+
+                        importer = XrayImporter()
+                        parsed = await asyncio.get_event_loop().run_in_executor(
+                            None, importer.parse_xray_file, file_content, filename,
+                        )
+
+                        if not parsed:
+                            xray_status.text = "No valid rows found."
+                            ui.notify("Xray file had no valid ASIN rows.", type="warning")
+                            return
+
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            None, importer.import_xray, product.id, session_id, parsed,
+                        )
+
+                        enriched = result.get("enriched", 0)
+                        added = result.get("added", 0)
+                        skipped = result.get("skipped", 0)
+                        errors = result.get("errors", [])
+
+                        msg = f"Xray import: {enriched} enriched, {added} new, {skipped} skipped"
+                        xray_status.text = msg
+                        ui.notify(msg, type="positive")
+
+                        if errors:
+                            for err in errors[:3]:
+                                ui.notify(err, type="warning")
+
+                        _competition_section.refresh()
+
+                    except Exception as exc:
+                        xray_status.text = f"Error: {exc}"
+                        ui.notify(f"Xray import failed: {exc}", type="negative")
+
+                ui.space()
+                with ui.row().classes("items-center gap-2"):
+                    ui.upload(
+                        label="Import Xray",
+                        auto_upload=True,
+                        on_upload=_handle_xray_upload,
+                    ).props(
+                        'accept=".xlsx,.xls,.csv" max-file-size=10485760 flat dense color=accent'
+                    ).classes("w-40").style("font-size:12px")
+                    xray_status = ui.label("").classes("text-caption text-secondary")
 
             ui.label(
                 f"Last researched: "
@@ -604,6 +714,12 @@ def product_detail_page(product_id: int):
                                 "thumbnail_url": c.thumbnail_url,
                                 "match_score": c.match_score,
                                 "reviewed": c.reviewed,
+                                # Xray / Helium 10 fields
+                                "monthly_sales": c.monthly_sales,
+                                "monthly_revenue": c.monthly_revenue,
+                                "seller": c.seller,
+                                "fulfillment": c.fulfillment,
+                                "fba_fees": c.fba_fees,
                             }
                             for c in comps
                         ]
