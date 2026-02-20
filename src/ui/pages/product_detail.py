@@ -1,7 +1,11 @@
 """Product detail page - Alibaba info + Amazon competition analysis."""
+import asyncio
+
 from nicegui import ui
 
+from config import SERPAPI_KEY
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
+from src.services import ImageFetcher
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
@@ -80,17 +84,59 @@ def product_detail_page(product_id: int):
             with ui.card().classes("w-full p-4"):
                 with ui.row().classes("items-start gap-6 w-full"):
                     # Product image / avatar placeholder
-                    if product.alibaba_image_url:
-                        ui.image(product.alibaba_image_url).classes(
-                            "w-32 h-32 rounded-lg object-cover"
-                        ).style("flex-shrink:0")
-                    else:
-                        letter = product.name[0].upper() if product.name else "?"
-                        bg = _avatar_color(product.name)
-                        ui.avatar(
-                            letter, color=bg, text_color="white", size="128px",
-                            font_size="48px",
-                        ).classes("rounded-lg")
+                    with ui.column().classes("items-center gap-1").style("flex-shrink:0"):
+                        if product.alibaba_image_url:
+                            image_el = ui.image(product.alibaba_image_url).classes(
+                                "w-32 h-32 rounded-lg object-cover"
+                            )
+                        else:
+                            letter = product.name[0].upper() if product.name else "?"
+                            bg = _avatar_color(product.name)
+                            image_el = ui.avatar(
+                                letter, color=bg, text_color="white", size="128px",
+                                font_size="48px",
+                            ).classes("rounded-lg")
+
+                        fetch_img_btn = ui.button(
+                            "Fetch Image", icon="image_search",
+                        ).props("flat dense size=sm color=secondary")
+                        fetch_img_status = ui.label("").classes(
+                            "text-caption text-secondary"
+                        )
+
+                        async def _fetch_single_image():
+                            if not SERPAPI_KEY:
+                                ui.notify("SERPAPI_KEY not configured.", type="negative")
+                                return
+
+                            fetch_img_btn.disable()
+                            fetch_img_status.text = "Searching..."
+                            fetcher = ImageFetcher(SERPAPI_KEY)
+
+                            url = await asyncio.get_event_loop().run_in_executor(
+                                None, fetcher.fetch_product_image, product.name,
+                            )
+
+                            if url:
+                                db = get_session()
+                                try:
+                                    p = db.query(Product).filter(
+                                        Product.id == product_id
+                                    ).first()
+                                    if p:
+                                        p.alibaba_image_url = url
+                                        db.commit()
+                                finally:
+                                    db.close()
+                                fetch_img_status.text = "Image saved!"
+                                ui.notify("Image fetched successfully!", type="positive")
+                                # Reload page to show the new image
+                                ui.navigate.to(f"/products/{product_id}")
+                            else:
+                                fetch_img_status.text = "No image found"
+                                fetch_img_btn.enable()
+
+                        fetch_img_btn.on_click(_fetch_single_image)
 
                     # Info grid
                     with ui.column().classes("flex-1 gap-2"):

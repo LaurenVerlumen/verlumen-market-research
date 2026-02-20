@@ -1,8 +1,11 @@
 """Products page -- browse and manage imported products."""
+import asyncio
+
 from nicegui import ui
 
-from src.models import get_session, init_db, Category, Product, AmazonCompetitor
-from src.services import parse_alibaba_url
+from config import SERPAPI_KEY
+from src.models import get_session, init_db, Category, Product, AmazonCompetitor, SearchSession
+from src.services import parse_alibaba_url, ImageFetcher
 from src.ui.layout import build_layout
 
 
@@ -168,92 +171,329 @@ def products_page():
                 ).classes("text-body1 text-secondary")
                 return
 
-            # Category filter
-            cat_names = ["All"] + [c.name for c in categories]
-            filter_select = ui.select(
-                cat_names, value="All", label="Filter by Category"
-            ).classes("w-64")
+            # --- Search bar ---
+            search_input = ui.input(
+                label="Search products",
+                placeholder="Type to filter by name...",
+            ).props('clearable outlined dense').classes("w-full")
+            search_input.props('prepend-inner-icon="search"')
 
+            # --- Filter row ---
+            with ui.row().classes("w-full items-center gap-4 flex-wrap"):
+                cat_names = ["All"] + [c.name for c in categories]
+                filter_select = ui.select(
+                    cat_names, value="All", label="Category",
+                ).props("outlined dense").classes("w-48")
+
+                status_select = ui.select(
+                    ["All", "Researched", "Pending"],
+                    value="All",
+                    label="Research Status",
+                ).props("outlined dense").classes("w-48")
+
+                sort_select = ui.select(
+                    ["Name (A-Z)", "Name (Z-A)", "Newest first", "Most competitors", "Category"],
+                    value="Name (A-Z)",
+                    label="Sort by",
+                ).props("outlined dense").classes("w-48")
+
+                ui.space()
+
+                # Fetch Images button (image-fetcher feature)
+                fetch_btn = ui.button(
+                    "Fetch Product Images", icon="image_search",
+                ).props("color=secondary outline")
+                fetch_status = ui.label("").classes("text-body2 text-secondary")
+
+            async def _fetch_all_images():
+                if not SERPAPI_KEY:
+                    ui.notify("SERPAPI_KEY is not configured.", type="negative")
+                    return
+
+                fetch_btn.disable()
+                fetch_status.text = "Loading products..."
+
+                db = get_session()
+                try:
+                    missing = (
+                        db.query(Product)
+                        .filter(Product.alibaba_image_url.is_(None))
+                        .all()
+                    )
+                    product_list = [{"id": p.id, "name": p.name} for p in missing]
+                finally:
+                    db.close()
+
+                if not product_list:
+                    fetch_status.text = "All products already have images."
+                    fetch_btn.enable()
+                    return
+
+                total = len(product_list)
+                fetched = 0
+                not_found = 0
+                fetcher = ImageFetcher(SERPAPI_KEY)
+
+                for idx, prod in enumerate(product_list, start=1):
+                    fetch_status.text = (
+                        f"Fetching image {idx}/{total}: {prod['name'][:40]}..."
+                    )
+                    url = await asyncio.get_event_loop().run_in_executor(
+                        None, fetcher.fetch_product_image, prod["name"],
+                    )
+
+                    if url:
+                        db = get_session()
+                        try:
+                            p = db.query(Product).filter(Product.id == prod["id"]).first()
+                            if p:
+                                p.alibaba_image_url = url
+                                db.commit()
+                                fetched += 1
+                        finally:
+                            db.close()
+                    else:
+                        not_found += 1
+
+                    if idx < total:
+                        await asyncio.sleep(1.5)
+
+                if not_found:
+                    fetch_status.text = (
+                        f"Done! Fetched {fetched}/{total} images"
+                        f" ({not_found} not found)"
+                    )
+                else:
+                    fetch_status.text = f"Done! Fetched {fetched}/{total} images"
+                fetch_btn.enable()
+                refresh_products()
+
+            fetch_btn.on_click(_fetch_all_images)
+
+            # --- Count label + view toggle ---
+            with ui.row().classes("w-full items-center justify-between"):
+                count_label = ui.label("").classes("text-body2 text-secondary")
+                view_toggle = ui.toggle(
+                    {False: "Grid", True: "Table"},
+                    value=False,
+                ).props("dense flat toggle-color=primary size=sm")
+
+            # --- Product container ---
             product_container = ui.column().classes("w-full gap-2")
+
+            def _get_filtered_products(db):
+                """Query and filter products based on current filter state."""
+                query = db.query(Product)
+
+                # Category filter
+                if filter_select.value != "All":
+                    cat = db.query(Category).filter_by(name=filter_select.value).first()
+                    if cat:
+                        query = query.filter(Product.category_id == cat.id)
+
+                products = query.all()
+
+                # Search filter (name substring, case-insensitive)
+                search_term = (search_input.value or "").strip().lower()
+                if search_term:
+                    products = [p for p in products if search_term in p.name.lower()]
+
+                # Research status filter
+                if status_select.value == "Researched":
+                    products = [p for p in products if len(p.search_sessions) > 0]
+                elif status_select.value == "Pending":
+                    products = [p for p in products if len(p.search_sessions) == 0]
+
+                # Sort
+                sort_val = sort_select.value
+                if sort_val == "Name (A-Z)":
+                    products.sort(key=lambda p: p.name.lower())
+                elif sort_val == "Name (Z-A)":
+                    products.sort(key=lambda p: p.name.lower(), reverse=True)
+                elif sort_val == "Newest first":
+                    products.sort(key=lambda p: p.created_at or p.id, reverse=True)
+                elif sort_val == "Most competitors":
+                    products.sort(
+                        key=lambda p: db.query(AmazonCompetitor).filter_by(product_id=p.id).count(),
+                        reverse=True,
+                    )
+                elif sort_val == "Category":
+                    products.sort(key=lambda p: (p.category.name if p.category else "", p.name.lower()))
+
+                return products
+
+            def _render_product_card(p, comp_count, session_count, db):
+                """Render a single product as a card in the grid."""
+                is_researched = session_count > 0
+
+                with ui.card().classes("w-full p-4 cursor-pointer").on(
+                    "click",
+                    lambda _, pid=p.id: ui.navigate.to(f"/products/{pid}"),
+                ):
+                    # Top row: thumbnail + name + link
+                    with ui.row().classes("items-start w-full gap-3"):
+                        # Thumbnail / avatar
+                        if p.alibaba_image_url:
+                            ui.image(p.alibaba_image_url).classes(
+                                "w-16 h-16 rounded object-cover"
+                            ).style("min-width:64px")
+                        else:
+                            letter = p.name[0].upper() if p.name else "?"
+                            bg = _avatar_color(p.name)
+                            ui.avatar(
+                                letter, color=bg, text_color="white", size="64px",
+                            )
+
+                        with ui.column().classes("flex-1 gap-1"):
+                            ui.label(p.name).classes("text-subtitle1 font-bold")
+                            with ui.row().classes("gap-2 items-center flex-wrap"):
+                                ui.badge(
+                                    p.category.name if p.category else "",
+                                    color="blue-2",
+                                ).props("outline")
+                                if is_researched:
+                                    ui.badge("Researched", color="positive")
+                                else:
+                                    ui.badge("Pending", color="grey-5")
+
+                        # Alibaba link (stop propagation so card click doesn't fire)
+                        if p.alibaba_url:
+                            with ui.link(
+                                target=p.alibaba_url, new_tab=True,
+                            ).classes("no-underline").on(
+                                "click.stop", lambda e: None,
+                            ):
+                                ui.button(icon="open_in_new").props(
+                                    "flat round dense color=primary size=sm"
+                                ).tooltip("Open on Alibaba")
+
+                    # Stats row
+                    with ui.row().classes("w-full gap-4 mt-2 items-center"):
+                        ui.label(
+                            f"{comp_count} competitor{'s' if comp_count != 1 else ''}"
+                        ).classes("text-caption text-secondary")
+
+                        if is_researched:
+                            latest = p.search_sessions[-1]
+                            if latest.avg_price is not None:
+                                ui.label(f"Avg ${latest.avg_price:.2f}").classes(
+                                    "text-caption text-positive"
+                                )
+                            if latest.avg_rating is not None:
+                                ui.label(f"Rating {latest.avg_rating:.1f}").classes(
+                                    "text-caption text-secondary"
+                                )
+
+                        price = _format_price(p.alibaba_price_min, p.alibaba_price_max)
+                        if price != "-":
+                            ui.label(price).classes("text-caption text-positive")
+
+                        ui.space()
+                        # Delete button (stop card click propagation)
+                        with ui.element("div").on("click.stop", lambda e: None):
+                            _delete_button(p.id, p.name, refresh_products)
+
+            def _render_product_row(p, comp_count, session_count, db):
+                """Render a single product as a row in the table view."""
+                is_researched = session_count > 0
+                price = _format_price(p.alibaba_price_min, p.alibaba_price_max)
+
+                with ui.card().classes("w-full p-3"):
+                    with ui.row().classes("items-center w-full gap-4"):
+                        with ui.row().classes(
+                            "items-center flex-1 gap-4 cursor-pointer"
+                        ).on(
+                            "click",
+                            lambda _, pid=p.id: ui.navigate.to(f"/products/{pid}"),
+                        ):
+                            # Thumbnail / avatar
+                            if p.alibaba_image_url:
+                                ui.image(p.alibaba_image_url).classes(
+                                    "w-10 h-10 rounded object-cover"
+                                )
+                            else:
+                                letter = p.name[0].upper() if p.name else "?"
+                                bg = _avatar_color(p.name)
+                                ui.avatar(
+                                    letter, color=bg, text_color="white", size="40px",
+                                )
+
+                            with ui.column().classes("flex-1 gap-0"):
+                                ui.label(p.name).classes("text-subtitle2 font-bold")
+                                with ui.row().classes("gap-2 items-center"):
+                                    ui.badge(
+                                        p.category.name if p.category else "",
+                                        color="blue-2",
+                                    ).props("outline")
+                                    if is_researched:
+                                        ui.badge("Researched", color="positive")
+                                    else:
+                                        ui.badge("Pending", color="grey-5")
+                                    ui.label(
+                                        f"{comp_count} competitor{'s' if comp_count != 1 else ''}"
+                                    ).classes("text-caption text-secondary")
+
+                            ui.label(price).classes(
+                                "text-body2 text-right"
+                                + (" text-positive" if price != "-" else " text-secondary")
+                            ).style("min-width:100px")
+
+                        if p.alibaba_url:
+                            with ui.link(
+                                target=p.alibaba_url, new_tab=True,
+                            ).classes("no-underline"):
+                                ui.button(icon="open_in_new").props(
+                                    "flat round dense color=primary size=sm"
+                                ).tooltip("Open on Alibaba")
+                        else:
+                            ui.icon("link_off").classes("text-grey-5").tooltip(
+                                "No Alibaba URL"
+                            )
+
+                        _delete_button(p.id, p.name, refresh_products)
 
             def refresh_products():
                 product_container.clear()
                 db = get_session()
                 try:
-                    query = db.query(Product).order_by(Product.name)
-                    if filter_select.value != "All":
-                        cat = db.query(Category).filter_by(name=filter_select.value).first()
-                        if cat:
-                            query = query.filter(Product.category_id == cat.id)
+                    total_count = db.query(Product).count()
+                    products = _get_filtered_products(db)
+                    count_label.text = f"Showing {len(products)} of {total_count} products"
 
-                    products = query.all()
                     with product_container:
                         if not products:
-                            ui.label("No products found.").classes("text-body2 text-secondary")
+                            ui.label("No products match your filters.").classes(
+                                "text-body2 text-secondary"
+                            )
                             return
 
-                        for p in products:
-                            comp_count = db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
-                            price = _format_price(p.alibaba_price_min, p.alibaba_price_max)
+                        is_table = view_toggle.value
 
-                            with ui.card().classes("w-full p-3"):
-                                with ui.row().classes("items-center w-full gap-4"):
-                                    # Clickable area: thumbnail + info + price
-                                    with ui.row().classes(
-                                        "items-center flex-1 gap-4 cursor-pointer"
-                                    ).on(
-                                        "click",
-                                        lambda _, pid=p.id: ui.navigate.to(f"/products/{pid}"),
-                                    ):
-                                        # Thumbnail / avatar
-                                        if p.alibaba_image_url:
-                                            ui.image(p.alibaba_image_url).classes(
-                                                "w-10 h-10 rounded object-cover"
-                                            )
-                                        else:
-                                            letter = p.name[0].upper() if p.name else "?"
-                                            bg = _avatar_color(p.name)
-                                            ui.avatar(
-                                                letter, color=bg, text_color="white", size="40px",
-                                            )
-
-                                        # Product info
-                                        with ui.column().classes("flex-1 gap-0"):
-                                            ui.label(p.name).classes("text-subtitle2 font-bold")
-                                            with ui.row().classes("gap-2 items-center"):
-                                                ui.badge(
-                                                    p.category.name if p.category else "",
-                                                    color="blue-2",
-                                                ).props("outline")
-                                                ui.label(
-                                                    f"{comp_count} competitor{'s' if comp_count != 1 else ''}"
-                                                ).classes("text-caption text-secondary")
-
-                                        # Price
-                                        ui.label(price).classes(
-                                            "text-body2 text-right"
-                                            + (" text-positive" if price != "-" else " text-secondary")
-                                        ).style("min-width:100px")
-
-                                    # Alibaba link
-                                    if p.alibaba_url:
-                                        with ui.link(
-                                            target=p.alibaba_url, new_tab=True,
-                                        ).classes("no-underline"):
-                                            ui.button(icon="open_in_new").props(
-                                                "flat round dense color=primary size=sm"
-                                            ).tooltip("Open on Alibaba")
-                                    else:
-                                        ui.icon("link_off").classes("text-grey-5").tooltip(
-                                            "No Alibaba URL"
-                                        )
-
-                                    # Delete button
-                                    _delete_button(p.id, p.name, refresh_products)
+                        if is_table:
+                            for p in products:
+                                comp_count = db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
+                                session_count = len(p.search_sessions)
+                                _render_product_row(p, comp_count, session_count, db)
+                        else:
+                            with ui.element("div").classes(
+                                "w-full grid gap-4"
+                            ).style(
+                                "grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))"
+                            ):
+                                for p in products:
+                                    comp_count = db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
+                                    session_count = len(p.search_sessions)
+                                    _render_product_card(p, comp_count, session_count, db)
                 finally:
                     db.close()
 
+            # Wire up all filter controls to refresh
+            search_input.on("input", lambda _: refresh_products())
             filter_select.on_value_change(lambda _: refresh_products())
+            status_select.on_value_change(lambda _: refresh_products())
+            sort_select.on_value_change(lambda _: refresh_products())
+            view_toggle.on_value_change(lambda _: refresh_products())
+
             refresh_products()
         finally:
             session.close()

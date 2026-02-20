@@ -4,6 +4,7 @@ from src.services.amazon_search import AmazonSearchError, AmazonSearchService
 from src.services.competition_analyzer import CompetitionAnalyzer
 from src.services.excel_exporter import ExcelExporter
 from src.services.excel_importer import parse_excel
+from src.services.image_fetcher import ImageFetcher
 
 __all__ = [
     "parse_alibaba_url",
@@ -12,4 +13,5 @@ __all__ = [
     "AmazonSearchError",
     "CompetitionAnalyzer",
     "ExcelExporter",
+    "ImageFetcher",
 ]
