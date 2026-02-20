@@ -58,6 +58,7 @@ def import_page():
                             alibaba_product_id=prod.get("product_id"),
                             name=prod["name"],
                             amazon_search_query=prod["name"],
+                            alibaba_supplier=prod.get("supplier"),
                         )
                         session.add(product)
                         imported_names.append(prod["name"])

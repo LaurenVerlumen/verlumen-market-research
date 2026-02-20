@@ -39,11 +39,14 @@ def parse_excel(source: Union[str, Path, bytes]) -> list[dict]:
     categories: list[dict] = []
     current_category: dict | None = None
 
-    for row in ws.iter_rows(min_row=1, max_col=2, values_only=True):
-        col_a, col_b = row[0], row[1] if len(row) > 1 else None
+    for row in ws.iter_rows(min_row=1, max_col=3, values_only=True):
+        col_a = row[0] if len(row) > 0 else None
+        col_b = row[1] if len(row) > 1 else None
+        col_c = row[2] if len(row) > 2 else None
 
         col_a_str = str(col_a).strip() if col_a else ""
         col_b_str = str(col_b).strip() if col_b else ""
+        col_c_str = str(col_c).strip() if col_c else ""
 
         is_url = col_b_str.startswith("http")
 
@@ -51,7 +54,10 @@ def parse_excel(source: Union[str, Path, bytes]) -> list[dict]:
             # New category with its first product
             current_category = {"category": col_a_str, "products": []}
             categories.append(current_category)
-            current_category["products"].append(_make_product(col_b_str))
+            product = _make_product(col_b_str)
+            if col_c_str:
+                product["supplier"] = col_c_str
+            current_category["products"].append(product)
 
         elif not col_a_str and is_url:
             # Product in current category
@@ -59,7 +65,10 @@ def parse_excel(source: Union[str, Path, bytes]) -> list[dict]:
                 # Edge case: URL before any category header -- create unnamed group
                 current_category = {"category": "Uncategorized", "products": []}
                 categories.append(current_category)
-            current_category["products"].append(_make_product(col_b_str))
+            product = _make_product(col_b_str)
+            if col_c_str:
+                product["supplier"] = col_c_str
+            current_category["products"].append(product)
 
         # Blank rows (both A and B empty) are category separators -- nothing to do
 
