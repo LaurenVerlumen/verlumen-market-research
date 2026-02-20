@@ -37,19 +37,24 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 
 - **Excel Import** - Upload or auto-detect your Verlumen Product Research spreadsheet
 - **Alibaba URL Parsing** - Automatically extracts product names from Alibaba URLs
-- **Amazon Competition Search** - Uses SerpAPI to find competing products on Amazon.com
+- **Amazon Competition Search** - Multi-page SerpAPI search (40-60 results) with Amazon department filtering
 - **Competition Scoring** - Automated 0-100 competition and opportunity scores
-- **Product Dashboard** - Browse products by category with real thumbnails, search, filter, sort
+- **Product Dashboard** - Browse products by category with real thumbnails, search, filter, sort, bulk operations
 - **Product Images** - Auto-fetch via SerpAPI Google Images + manual upload, stored locally
-- **Excel Export** - 3-sheet report: Summary, Detailed Competitors, Category Analysis (with conditional formatting)
-- **Category Management** - Rename, add, delete categories from Settings
-- **SerpAPI Integration** - 100 free searches/month (more than enough for typical research)
+- **Profit Analysis** - Landed cost, margins, ROI, break-even calculations for budget/competitive/premium strategies
+- **Excel Export** - 5-sheet report: Summary, Competitors, Category Analysis, Profit Analysis, AI Recommendations
+- **Category Management** - Rename, add, delete categories, configure Amazon department per category
+- **Search Caching** - 24h SQLite cache saves API credits on repeated searches
+- **Research Page** - Visual product browser with thumbnails, filters, quick-select, progress tracking
+- **SerpAPI Integration** - 100 free searches/month with smart caching and retry logic
 
 ### ML-Powered Intelligence
 - **Smart Query Optimizer** - TF-IDF keyword extraction cleans Alibaba product names for better Amazon searches
-- **Product Match Scoring** - Cosine similarity ranks how relevant each Amazon competitor is (0-100)
+- **Product Match Scoring** - Cosine similarity ranks how relevant each Amazon competitor is (0-100), color-coded in tables
 - **Price Recommender** - Budget/Competitive/Premium pricing strategies using K-means clustering
 - **Demand Estimator** - Parses "bought last month" data to estimate monthly revenue and market size
+- **Profit Calculator** - Full margin analysis: landed cost, Amazon fees, net profit, ROI%, break-even units
+- **Relevance Filtering** - Filter competitors by match score, hide irrelevant results
 - **AI Insights Dashboard** - ECharts price distribution, category comparison, top opportunity rankings
 
 ## Quick Start
