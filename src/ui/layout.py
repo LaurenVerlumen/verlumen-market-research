@@ -13,9 +13,36 @@ NAV_ITEMS = [
     {"label": "Import Data", "icon": "upload_file", "path": "/import"},
     {"label": "Products", "icon": "inventory_2", "path": "/products"},
     {"label": "Amazon Search", "icon": "search", "path": "/research"},
+    {"label": "Evaluation", "icon": "assessment", "path": "/evaluation"},
     {"label": "Export", "icon": "file_download", "path": "/export"},
     {"label": "Settings", "icon": "settings", "path": "/settings"},
 ]
+
+# JavaScript to highlight the current sidebar nav link on page load.
+# Finds <a> tags in the sidebar whose href matches the current path,
+# then styles the first child row div as the active link.
+_ACTIVE_NAV_JS = """
+(function() {
+    var path = window.location.pathname;
+    var links = document.querySelectorAll('.q-drawer a[href]');
+    links.forEach(function(a) {
+        var href = a.getAttribute('href');
+        var isActive = (href === '/' && path === '/') ||
+                       (href !== '/' && path.startsWith(href));
+        if (isActive) {
+            var row = a.querySelector('.row, .q-item');
+            if (row) {
+                row.style.background = '#E8E0D6';
+                row.style.borderLeft = '3px solid #A08968';
+            }
+            a.querySelectorAll('.text-secondary').forEach(function(child) {
+                child.style.color = '#4A4443';
+                child.style.fontWeight = '600';
+            });
+        }
+    });
+})();
+"""
 
 
 def build_layout(title: str = "Verlumen Market Research"):
@@ -48,6 +75,9 @@ def build_layout(title: str = "Verlumen Market Research"):
         ui.separator().classes("mb-2")
         for item in NAV_ITEMS:
             _nav_link(item["label"], item["icon"], item["path"])
+
+    # Highlight active sidebar nav link after page loads
+    ui.timer(0.1, lambda: ui.run_javascript(_ACTIVE_NAV_JS), once=True)
 
     # Main content container
     content = ui.column().classes("w-full p-4 max-w-7xl mx-auto gap-4")

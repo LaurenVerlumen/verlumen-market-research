@@ -1,7 +1,8 @@
 """Market demand estimation from Amazon competitor data."""
-import re
 import statistics
 from typing import Optional
+
+from src.services.utils import parse_bought as _parse_bought
 
 
 def estimate_demand(competitors: list[dict]) -> dict:
@@ -77,28 +78,6 @@ def estimate_demand(competitors: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _parse_bought(value) -> Optional[int]:
-    """Parse 'X+ bought in past month' or numeric values into an int."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        cleaned = value.lower().replace(",", "").strip()
-        if not cleaned:
-            return None
-        # Handle "1K+", "10K+" style
-        if "k" in cleaned:
-            num_part = cleaned.split("k")[0].strip().rstrip("+").strip()
-            try:
-                return int(float(num_part) * 1000)
-            except (ValueError, TypeError):
-                return None
-        match = re.search(r"(\d+)", cleaned)
-        if match:
-            return int(match.group(1))
-    return None
 
 
 def _categorize_market(total_revenue: float, total_units: int) -> str:

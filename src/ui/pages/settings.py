@@ -1,11 +1,14 @@
 """Settings page - configure API keys and app preferences."""
+import asyncio
 import os
 
 from nicegui import ui
 
+import config
 from config import (
     BASE_DIR, SERPAPI_KEY,
     AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENTS,
+    save_department_map,
 )
 from src.models import Category, Product, get_session
 from src.services import AmazonSearchService
@@ -60,10 +63,11 @@ def settings_page():
 
                 _update_env_file("SERPAPI_KEY", new_key)
                 os.environ["SERPAPI_KEY"] = new_key
+                config.SERPAPI_KEY = new_key
 
                 status_label.text = _mask_key(new_key)
                 api_input.value = ""
-                ui.notify("API key saved! Restart the app for full effect.", type="positive")
+                ui.notify("API key saved!", type="positive")
 
             async def validate_key():
                 key = api_input.value.strip() or current_key
@@ -72,11 +76,12 @@ def settings_page():
                     return
                 validation_label.text = "Validating..."
                 service = AmazonSearchService(api_key=key)
-                valid = service.check_api_key()
+                loop = asyncio.get_event_loop()
+                valid = await loop.run_in_executor(None, service.check_api_key)
                 if valid:
                     validation_label.text = "Key is valid!"
                     validation_label.classes("text-positive", remove="text-negative")
-                    remaining = service.get_remaining_searches()
+                    remaining = await loop.run_in_executor(None, service.get_remaining_searches)
                     if remaining is not None:
                         validation_label.text += f" ({remaining} searches remaining)"
                 else:
@@ -234,6 +239,7 @@ def settings_page():
                                     def _on_change(e):
                                         new_dept = dept_options.get(e.value, e.value)
                                         AMAZON_DEPARTMENT_MAP[cname.lower()] = new_dept
+                                        save_department_map(AMAZON_DEPARTMENT_MAP)
                                         ui.notify(
                                             f"Mapped '{cname}' -> {e.value}",
                                             type="positive",

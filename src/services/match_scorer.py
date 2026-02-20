@@ -25,13 +25,17 @@ def score_matches(product_name: str, competitors: list[dict]) -> list[dict]:
     if not competitors:
         return []
 
+    # Work on a deep copy to avoid mutating the caller's list
+    import copy
+    scored = copy.deepcopy(competitors)
+
     if not product_name or not product_name.strip():
-        for c in competitors:
+        for c in scored:
             c["match_score"] = 0
-        return competitors
+        return scored
 
     # Build corpus: first document is the source product, rest are competitor titles
-    titles = [c.get("title", "") or "" for c in competitors]
+    titles = [c.get("title", "") or "" for c in scored]
     corpus = [product_name] + titles
 
     try:
@@ -47,13 +51,13 @@ def score_matches(product_name: str, competitors: list[dict]) -> list[dict]:
         competitor_vecs = tfidf_matrix[1:]
         similarities = cosine_similarity(source_vec, competitor_vecs).flatten()
 
-        for i, comp in enumerate(competitors):
+        for i, comp in enumerate(scored):
             comp["match_score"] = round(float(similarities[i]) * 100, 1)
     except Exception:
         # If TF-IDF fails (e.g. all empty titles), assign zero scores
-        for c in competitors:
+        for c in scored:
             c["match_score"] = 0
 
     # Sort by match_score descending
-    competitors.sort(key=lambda c: c.get("match_score", 0), reverse=True)
-    return competitors
+    scored.sort(key=lambda c: c.get("match_score", 0), reverse=True)
+    return scored

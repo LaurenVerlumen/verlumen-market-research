@@ -2,9 +2,11 @@
 from datetime import datetime
 
 from nicegui import ui, app
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 from config import EXPORTS_DIR
-from src.models import get_session, Product, SearchSession, AmazonCompetitor
+from src.models import get_session, Product, Category, SearchSession, AmazonCompetitor
 from src.services import ExcelExporter, CompetitionAnalyzer
 from src.ui.layout import build_layout
 
@@ -83,6 +85,39 @@ def export_page():
             include_ml_cb.on_value_change(lambda _: _update_sheets_label())
             include_profit_cb.on_value_change(lambda _: _update_sheets_label())
 
+        # --- Export Filters ---
+        with ui.card().classes("w-full p-4"):
+            ui.label("Export Filters").classes("text-subtitle1 font-bold mb-2")
+            ui.label("Narrow down which products to include in the export.").classes(
+                "text-caption text-secondary mb-2"
+            )
+
+            # Load categories for filter dropdown
+            _cat_session = get_session()
+            try:
+                _cat_names = ["All"] + [
+                    c.name for c in _cat_session.query(Category).order_by(Category.name).all()
+                ]
+            finally:
+                _cat_session.close()
+
+            with ui.row().classes("gap-4 flex-wrap items-end"):
+                export_cat_filter = ui.select(
+                    _cat_names, value="All", label="Category",
+                ).props("outlined dense").classes("w-48")
+
+                export_status_filter = ui.select(
+                    ["All", "Imported", "Researched", "Under Review", "Approved", "Rejected"],
+                    value="All",
+                    label="Product Status",
+                ).props("outlined dense").classes("w-48")
+
+                export_research_filter = ui.select(
+                    ["All", "Researched Only", "Unresearched Only"],
+                    value="All",
+                    label="Research Status",
+                ).props("outlined dense").classes("w-48")
+
         filename_input = ui.input(
             label="Output filename",
             value=f"verlumen-research-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx",
@@ -103,28 +138,86 @@ def export_page():
 
             session = get_session()
             try:
-                products = session.query(Product).order_by(Product.category_id, Product.name).all()
+                query = (
+                    session.query(Product)
+                    .options(joinedload(Product.category))
+                )
+
+                # Apply export filters
+                _cat_val = export_cat_filter.value
+                if _cat_val != "All":
+                    _cat_obj = session.query(Category).filter_by(name=_cat_val).first()
+                    if _cat_obj:
+                        query = query.filter(Product.category_id == _cat_obj.id)
+
+                _status_map = {
+                    "Imported": "imported",
+                    "Researched": "researched",
+                    "Under Review": "under_review",
+                    "Approved": "approved",
+                    "Rejected": "rejected",
+                }
+                _st_val = export_status_filter.value
+                if _st_val != "All" and _st_val in _status_map:
+                    query = query.filter(Product.status == _status_map[_st_val])
+
+                _res_val = export_research_filter.value
+                if _res_val == "Researched Only":
+                    query = query.filter(
+                        Product.id.in_(
+                            session.query(SearchSession.product_id).distinct()
+                        )
+                    )
+                elif _res_val == "Unresearched Only":
+                    query = query.filter(
+                        ~Product.id.in_(
+                            session.query(SearchSession.product_id).distinct()
+                        )
+                    )
+
+                products = query.order_by(Product.category_id, Product.name).all()
                 analyzer = CompetitionAnalyzer()
                 products_data = []
 
-                for p in products:
-                    latest = (
-                        session.query(SearchSession)
-                        .filter(SearchSession.product_id == p.id)
-                        .order_by(SearchSession.created_at.desc())
-                        .first()
+                # Batch: get latest session ID per product
+                latest_subq = (
+                    session.query(
+                        SearchSession.product_id,
+                        func.max(SearchSession.id).label("max_id"),
                     )
+                    .group_by(SearchSession.product_id)
+                    .subquery()
+                )
+                latest_map = {
+                    row.product_id: row.max_id
+                    for row in session.query(
+                        latest_subq.c.product_id,
+                        latest_subq.c.max_id,
+                    ).all()
+                }
+
+                # Batch: load all competitors for latest sessions
+                latest_ids = list(latest_map.values())
+                all_comps = []
+                if latest_ids:
+                    all_comps = (
+                        session.query(AmazonCompetitor)
+                        .filter(AmazonCompetitor.search_session_id.in_(latest_ids))
+                        .order_by(AmazonCompetitor.position)
+                        .all()
+                    )
+                comps_by_session: dict[int, list] = {}
+                for c in all_comps:
+                    comps_by_session.setdefault(c.search_session_id, []).append(c)
+
+                for p in products:
+                    latest_sid = latest_map.get(p.id)
 
                     competitors_raw = []
                     analysis = {}
 
-                    if latest:
-                        comps = (
-                            session.query(AmazonCompetitor)
-                            .filter(AmazonCompetitor.search_session_id == latest.id)
-                            .order_by(AmazonCompetitor.position)
-                            .all()
-                        )
+                    if latest_sid:
+                        comps = comps_by_session.get(latest_sid, [])
                         competitors_raw = [
                             {
                                 "asin": c.asin,

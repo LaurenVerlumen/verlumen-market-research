@@ -1,4 +1,5 @@
 """Application configuration."""
+import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -11,6 +12,7 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "verlumen.db"
 EXPORTS_DIR = DATA_DIR / "exports"
 IMAGES_DIR = DATA_DIR / "images"
+DEPARTMENT_MAPPING_FILE = DATA_DIR / "department_mapping.json"
 
 # Ensure directories exist
 DATA_DIR.mkdir(exist_ok=True)
@@ -29,7 +31,7 @@ AMAZON_MARKETPLACE = "US"
 
 # Amazon department mapping: category name (case-insensitive) → SerpAPI amazon_department
 # "aps" means "All Departments" (no filter)
-AMAZON_DEPARTMENT_MAP: dict[str, str] = {
+_DEFAULT_DEPARTMENT_MAP: dict[str, str] = {
     "juegos 3 anos": "toys-and-games",
     "juegos baby": "baby-products",
     "puzzles": "toys-and-games",
@@ -42,6 +44,32 @@ AMAZON_DEPARTMENT_MAP: dict[str, str] = {
     "educational": "toys-and-games",
     "wooden toys": "toys-and-games",
 }
+
+
+def _load_department_map() -> dict[str, str]:
+    """Load department mapping from JSON file, falling back to defaults."""
+    mapping = dict(_DEFAULT_DEPARTMENT_MAP)
+    if DEPARTMENT_MAPPING_FILE.exists():
+        try:
+            with open(DEPARTMENT_MAPPING_FILE, "r", encoding="utf-8") as f:
+                saved = json.load(f)
+            if isinstance(saved, dict):
+                mapping.update(saved)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return mapping
+
+
+def save_department_map(mapping: dict[str, str]) -> None:
+    """Persist the department mapping to a JSON file."""
+    try:
+        with open(DEPARTMENT_MAPPING_FILE, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+AMAZON_DEPARTMENT_MAP: dict[str, str] = _load_department_map()
 # Default department for categories not in the map (Verlumen is a toy company)
 AMAZON_DEPARTMENT_DEFAULT = "toys-and-games"
 

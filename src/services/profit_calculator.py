@@ -1,6 +1,9 @@
 """Profit and margin analysis for Alibaba-to-Amazon arbitrage."""
 from typing import Optional
 
+from src.services.utils import parse_bought as _parse_bought
+from src.services.fee_calculator import calculate_fees as _calculate_fees
+
 
 def calculate_profit(
     alibaba_price_min: float,
@@ -8,6 +11,8 @@ def calculate_profit(
     amazon_competitors: list[dict],
     shipping_estimate: float = 3.0,
     amazon_fee_pct: float = 0.15,
+    category: str = "toys-and-games",
+    weight_lbs: float = 1.0,
 ) -> dict:
     """Calculate profit/margin metrics for budget, competitive, and premium strategies.
 
@@ -22,14 +27,20 @@ def calculate_profit(
     shipping_estimate : float
         Estimated shipping cost per unit (default $3.00).
     amazon_fee_pct : float
-        Amazon referral fee as a fraction (default 0.15 = 15%).
+        Legacy parameter (kept for backwards compatibility). Ignored when
+        real fee calculator is available.
+    category : str
+        Amazon product category slug for referral fee lookup.
+    weight_lbs : float
+        Estimated product weight in pounds for FBA fee calculation.
 
     Returns
     -------
     dict with keys:
         - landed_cost: average alibaba price + shipping
         - strategies: dict with budget/competitive/premium entries containing
-          selling_price, amazon_fee, net_profit, profit_margin_pct, roi_pct
+          selling_price, amazon_fee, fba_fee, total_fees, net_profit,
+          profit_margin_pct, roi_pct
         - break_even_units: dict per strategy
         - monthly_profit_estimate: dict per strategy
     """
@@ -71,8 +82,17 @@ def calculate_profit(
     moq = 100
 
     for name, selling_price in strategy_prices.items():
-        fee = round(selling_price * amazon_fee_pct, 2)
-        net_profit = round(selling_price - fee - landed_cost, 2)
+        # Use real fee calculator for accurate fee breakdown
+        fees = _calculate_fees(
+            selling_price=selling_price,
+            category=category,
+            weight_lbs=weight_lbs,
+            shipping_cost=shipping_estimate,
+            ppc_pct=0.0,  # Exclude PPC from profit calc (shown separately)
+            include_storage=True,
+        )
+        total_fee = fees["referral_fee"] + fees["fba_fee"] + fees["storage_fee"]
+        net_profit = round(selling_price - total_fee - landed_cost, 2)
         margin_pct = round((net_profit / selling_price) * 100, 1) if selling_price > 0 else 0.0
         roi_pct = round((net_profit / landed_cost) * 100, 1) if landed_cost > 0 else 0.0
 
@@ -89,7 +109,10 @@ def calculate_profit(
 
         strategies[name] = {
             "selling_price": round(selling_price, 2),
-            "amazon_fee": fee,
+            "amazon_fee": round(fees["referral_fee"], 2),
+            "fba_fee": round(fees["fba_fee"], 2),
+            "storage_fee": round(fees["storage_fee"], 2),
+            "total_fees": round(total_fee, 2),
             "net_profit": net_profit,
             "profit_margin_pct": margin_pct,
             "roi_pct": roi_pct,
@@ -114,7 +137,6 @@ def calculate_profit(
 
 def _build_demand_data(competitors: list[dict]) -> list[tuple[float, int]]:
     """Extract (price, monthly_units) pairs from competitor data."""
-    import re
     data = []
     for c in competitors:
         price = c.get("price")
@@ -124,28 +146,6 @@ def _build_demand_data(competitors: list[dict]) -> list[tuple[float, int]]:
             data.append((price, units))
     return data
 
-
-def _parse_bought(value) -> Optional[int]:
-    """Parse 'X+ bought in past month' or numeric values into an int."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        import re
-        cleaned = value.lower().replace(",", "").strip()
-        if not cleaned:
-            return None
-        if "k" in cleaned:
-            num_part = cleaned.split("k")[0].strip().rstrip("+").strip()
-            try:
-                return int(float(num_part) * 1000)
-            except (ValueError, TypeError):
-                return None
-        match = re.search(r"(\d+)", cleaned)
-        if match:
-            return int(match.group(1))
-    return None
 
 
 def _estimate_units_at_price(

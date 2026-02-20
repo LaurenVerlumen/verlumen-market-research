@@ -13,32 +13,11 @@ from src.services import (
     AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
 )
 from src.services.match_scorer import score_matches
+from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src, format_price as _format_price
+from src.services.viability_scorer import calculate_vvs
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
-
-
-# Predefined palette for letter-avatar backgrounds
-_AVATAR_COLORS = [
-    "#E57373", "#F06292", "#BA68C8", "#9575CD", "#7986CB",
-    "#64B5F6", "#4FC3F7", "#4DD0E1", "#4DB6AC", "#81C784",
-    "#AED581", "#DCE775", "#FFD54F", "#FFB74D", "#FF8A65",
-    "#A1887F", "#90A4AE",
-]
-
-
-def _avatar_color(name: str) -> str:
-    idx = ord(name[0].upper()) % len(_AVATAR_COLORS) if name else 0
-    return _AVATAR_COLORS[idx]
-
-
-def _product_image_src(product) -> str | None:
-    """Return the best image source URL for a product (local preferred)."""
-    if product.local_image_path:
-        return f"/images/{product.local_image_path}"
-    if product.alibaba_image_url:
-        return product.alibaba_image_url
-    return None
 
 
 def product_detail_page(product_id: int):
@@ -267,6 +246,7 @@ def product_detail_page(product_id: int):
                                     _format_price(
                                         product.alibaba_price_min,
                                         product.alibaba_price_max,
+                                        na_text="N/A",
                                     ),
                                 )
                             ui.label("Supplier / Factory").classes(
@@ -438,6 +418,11 @@ def product_detail_page(product_id: int):
                             )
                             db.add(amazon_comp)
 
+                        # Auto-update product status to "researched"
+                        p_obj = db.query(Product).filter(Product.id == pid).first()
+                        if p_obj and p_obj.status == "imported":
+                            p_obj.status = "researched"
+
                         db.commit()
                     finally:
                         db.close()
@@ -540,6 +525,22 @@ def product_detail_page(product_id: int):
                             "reviews", "secondary",
                         )
 
+                    # --- VVS Verdict Banner + Dimension Breakdown ---
+                    if comps:
+                        _vvs_comp_data = [
+                            {
+                                "price": c.price, "rating": c.rating,
+                                "review_count": c.review_count,
+                                "bought_last_month": c.bought_last_month,
+                                "badge": c.badge, "is_prime": c.is_prime,
+                                "is_sponsored": c.is_sponsored,
+                                "position": c.position,
+                            }
+                            for c in comps
+                        ]
+                        _alibaba_cost = product.alibaba_price_min if product.alibaba_price_min is not None else None
+                        _render_vvs_banner(product, _vvs_comp_data, _alibaba_cost)
+
                     if comps:
                         comp_data = [
                             {
@@ -639,6 +640,22 @@ def product_detail_page(product_id: int):
                             finally:
                                 db4.close()
 
+                        # Reviewed progress summary
+                        _reviewed_count = sum(1 for c in comp_data if c.get("reviewed"))
+                        _total_comps = len(comp_data)
+                        _review_pct = _reviewed_count / _total_comps if _total_comps > 0 else 0
+                        with ui.row().classes("w-full items-center gap-3 mt-2 mb-1"):
+                            ui.icon("fact_check", size="sm").classes("text-secondary")
+                            ui.label(
+                                f"Reviewed {_reviewed_count} of {_total_comps} competitors"
+                            ).classes("text-caption text-secondary")
+                            ui.linear_progress(
+                                value=_review_pct,
+                                color="accent" if _review_pct < 1 else "positive",
+                            ).classes("flex-1").props("rounded size=6px")
+                            if _review_pct >= 1.0:
+                                ui.icon("check_circle", size="sm").classes("text-positive")
+
                         competitor_table(
                             comp_data,
                             on_delete=_delete_competitor,
@@ -660,9 +677,138 @@ def product_detail_page(product_id: int):
             session.close()
 
 
+def _render_vvs_banner(product, comp_data: list[dict], alibaba_cost):
+    """Render the VVS verdict banner and dimension breakdown."""
+    try:
+        vvs = calculate_vvs(product, comp_data, alibaba_cost=alibaba_cost)
+    except Exception:
+        return
+
+    score = vvs.get("vvs_score", 0)
+    verdict = vvs.get("verdict", "N/A")
+    verdict_color = vvs.get("verdict_color", "grey")
+    recommendation = vvs.get("recommendation", "")
+    dimensions = vvs.get("dimensions", {})
+
+    if score == 0 and not dimensions:
+        return
+
+    # Color mapping for banner background
+    _color_map = {
+        "green": "#2E7D32",
+        "yellow": "#F9A825",
+        "orange": "#EF6C00",
+        "red": "#C62828",
+    }
+    _text_color_map = {
+        "green": "white",
+        "yellow": "#333",
+        "orange": "white",
+        "red": "white",
+    }
+    bg = _color_map.get(verdict_color, "#616161")
+    fg = _text_color_map.get(verdict_color, "white")
+
+    # Verdict Banner
+    with ui.card().classes("w-full p-0 mt-4 overflow-hidden").style("border: none"):
+        with ui.row().classes(
+            "w-full items-center gap-4 px-6 py-4"
+        ).style(f"background: {bg}; color: {fg}"):
+            # Large VVS score number
+            with ui.column().classes("items-center").style("min-width: 80px"):
+                ui.label(f"{score}").classes("text-h3 font-bold").style(f"color: {fg}; line-height: 1")
+                ui.label("/ 10").classes("text-caption").style(f"color: {fg}; opacity: 0.8")
+
+            # Verdict text and recommendation
+            with ui.column().classes("flex-1 gap-1"):
+                ui.label(verdict).classes("text-h6 font-bold").style(f"color: {fg}")
+                if recommendation:
+                    ui.label(recommendation).classes("text-body2").style(f"color: {fg}; opacity: 0.9")
+
+            # VVS badge
+            ui.label("VVS").classes("text-h6 font-bold").style(
+                f"color: {fg}; opacity: 0.4; letter-spacing: 4px"
+            )
+
+        # Dimension breakdown below the banner
+        if dimensions:
+            with ui.row().classes("w-full gap-4 flex-wrap px-4 py-3").style(
+                "background: #fafafa"
+            ):
+                _dim_labels = {
+                    "demand": ("Demand", "trending_up"),
+                    "competition": ("Competition", "groups"),
+                    "profitability": ("Profitability", "attach_money"),
+                    "market_quality": ("Mkt Quality", "assessment"),
+                    "differentiation": ("Differtn.", "lightbulb"),
+                }
+                for dim_key in ("demand", "competition", "profitability", "market_quality", "differentiation"):
+                    dim = dimensions.get(dim_key)
+                    if not dim:
+                        continue
+                    label, icon_name = _dim_labels.get(dim_key, (dim_key, "circle"))
+                    dim_score = dim["score"]
+                    # Color the bar based on score
+                    if dim_score >= 7:
+                        bar_color = "positive"
+                    elif dim_score >= 4:
+                        bar_color = "warning"
+                    else:
+                        bar_color = "negative"
+
+                    with ui.column().classes("items-center gap-1").style("min-width: 100px; flex: 1"):
+                        with ui.row().classes("items-center gap-1"):
+                            ui.icon(icon_name, size="xs").classes(f"text-{bar_color}")
+                            ui.label(label).classes("text-caption font-medium")
+                        ui.linear_progress(
+                            value=dim_score / 10.0, color=bar_color,
+                        ).classes("w-full").props("rounded size=8px")
+                        ui.label(f"{dim_score}/10").classes("text-caption text-secondary")
+                        if dim.get("details"):
+                            ui.tooltip(dim["details"])
+
+
 def _render_profit_analysis(product, competitors: list):
     """Render the Profit Analysis card if alibaba prices are set."""
     if product.alibaba_price_min is None:
+        # Show gentle prompt for entering Alibaba cost
+        with ui.card().classes("w-full p-4 mt-4").style(
+            "border: 1px dashed #A08968; background: #faf8f5"
+        ):
+            with ui.row().classes("items-center gap-3"):
+                ui.icon("info_outline").classes("text-accent text-2xl")
+                with ui.column().classes("flex-1 gap-1"):
+                    ui.label("Enter your Alibaba cost to unlock profit analysis").classes(
+                        "text-subtitle2 font-medium"
+                    )
+                    ui.label(
+                        "Set the Alibaba price above to see profit analysis and VVS profitability score."
+                    ).classes("text-caption text-secondary")
+                with ui.row().classes("items-end gap-2"):
+                    _cost_input = ui.number(
+                        label="Alibaba Cost ($)", format="%.2f",
+                        min=0.01, step=0.01,
+                    ).props("outlined dense").classes("w-32")
+
+                    def _save_cost():
+                        val = _cost_input.value
+                        if val is not None and val > 0:
+                            db = get_session()
+                            try:
+                                p = db.query(Product).filter(Product.id == product.id).first()
+                                if p:
+                                    p.alibaba_price_min = float(val)
+                                    db.commit()
+                                    ui.notify("Alibaba cost saved! Refreshing...", type="positive")
+                                    ui.navigate.to(f"/products/{product.id}")
+                            finally:
+                                db.close()
+                        else:
+                            ui.notify("Please enter a valid cost.", type="warning")
+
+                    ui.button("Save", icon="save", on_click=_save_cost).props(
+                        "color=accent size=sm"
+                    )
         return
 
     try:
@@ -793,10 +939,10 @@ def _render_ai_insights(product, competitors: list):
 
     try:
         match_results = score_matches(product.name, comp_data)
+        alibaba_cost = product.alibaba_price_min if product.alibaba_price_min is not None else None
         pricing = recommend_pricing(
-            alibaba_min=product.alibaba_price_min,
-            alibaba_max=product.alibaba_price_max,
             competitors=comp_data,
+            alibaba_cost=alibaba_cost,
         )
         demand = estimate_demand(comp_data)
     except Exception:
@@ -808,12 +954,21 @@ def _render_ai_insights(product, competitors: list):
             ui.label("AI Insights").classes("text-subtitle1 font-bold")
 
         # Price strategy cards
-        if pricing and pricing.get("strategies"):
+        strategies = pricing.get("strategies") if pricing else {}
+        if strategies:
             ui.label("Price Recommendations").classes("text-subtitle2 font-medium mb-2")
+            strategy_labels = {
+                "budget": "Budget",
+                "competitive": "Competitive",
+                "premium": "Premium",
+            }
             with ui.row().classes("gap-4 flex-wrap mb-4"):
-                for strategy in pricing["strategies"]:
+                for key in ("budget", "competitive", "premium"):
+                    strategy = strategies.get(key)
+                    if not strategy:
+                        continue
                     with ui.card().classes("p-3").style("min-width:200px"):
-                        ui.label(strategy.get("name", "Strategy")).classes(
+                        ui.label(strategy_labels.get(key, key)).classes(
                             "text-caption font-bold text-uppercase"
                         )
                         ui.label(
@@ -862,11 +1017,3 @@ def _info_row(label: str, value: str, is_link: bool = False):
         ui.label(value).classes("text-body2")
 
 
-def _format_price(pmin, pmax) -> str:
-    if pmin is not None and pmax is not None:
-        return f"${pmin:.2f} - ${pmax:.2f}"
-    if pmin is not None:
-        return f"${pmin:.2f}"
-    if pmax is not None:
-        return f"${pmax:.2f}"
-    return "N/A"

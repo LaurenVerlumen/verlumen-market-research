@@ -2,7 +2,7 @@
 import asyncio
 from datetime import datetime
 
-from nicegui import ui
+from nicegui import ui, app
 from sqlalchemy.orm import joinedload
 
 from config import SERPAPI_KEY, AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
@@ -12,31 +12,10 @@ from src.models import get_session, Category, Product, SearchSession, AmazonComp
 from src.services import AmazonSearchService, AmazonSearchError, CompetitionAnalyzer
 from src.services.query_optimizer import optimize_query
 from src.services.match_scorer import score_matches
+from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src
 from src.ui.layout import build_layout
 
 logger = logging.getLogger(__name__)
-
-
-# Reuse avatar helpers from the products page
-_AVATAR_COLORS = [
-    "#E57373", "#F06292", "#BA68C8", "#9575CD", "#7986CB",
-    "#64B5F6", "#4FC3F7", "#4DD0E1", "#4DB6AC", "#81C784",
-    "#AED581", "#DCE775", "#FFD54F", "#FFB74D", "#FF8A65",
-    "#A1887F", "#90A4AE",
-]
-
-
-def _avatar_color(name: str) -> str:
-    idx = ord(name[0].upper()) % len(_AVATAR_COLORS) if name else 0
-    return _AVATAR_COLORS[idx]
-
-
-def _product_image_src(product) -> str | None:
-    if product.local_image_path:
-        return f"/images/{product.local_image_path}"
-    if product.alibaba_image_url:
-        return product.alibaba_image_url
-    return None
 
 
 def research_page():
@@ -110,6 +89,31 @@ def research_page():
         # --- State ---
         selected_ids: set[int] = set()  # start with 0 selected
         pages_per_search = {"value": 1}
+
+        # Pre-select products from URL query parameter ?ids=1,2,3
+        # Uses app.storage.browser to check, but the canonical approach
+        # is to parse from the client URL via JavaScript after page load.
+        _valid_ids = {p["id"] for p in product_data}
+
+        async def _preselect_from_url():
+            try:
+                raw = await ui.run_javascript(
+                    'new URLSearchParams(window.location.search).get("ids")'
+                )
+                if raw:
+                    for part in str(raw).split(","):
+                        part = part.strip()
+                        if part.isdigit():
+                            pid = int(part)
+                            if pid in _valid_ids:
+                                selected_ids.add(pid)
+                    if selected_ids:
+                        _render_grid()
+                        _update_summary()
+            except RuntimeError:
+                pass
+
+        ui.timer(0.1, _preselect_from_url, once=True)
 
         # --- Filters ---
         with ui.card().classes("w-full p-4"):
@@ -329,7 +333,9 @@ def research_page():
 
             async def check_remaining():
                 service = AmazonSearchService(api_key=SERPAPI_KEY)
-                remaining = service.get_remaining_searches()
+                remaining = await asyncio.get_event_loop().run_in_executor(
+                    None, service.get_remaining_searches,
+                )
                 if remaining is not None:
                     remaining_label.text = f"SerpAPI searches remaining: {remaining}"
                 else:
@@ -388,6 +394,7 @@ def research_page():
                 total_competitors_found = 0
                 cache_hits = 0
 
+                results = {}
                 for pid in ids:
                     db = get_session()
                     try:
@@ -507,6 +514,10 @@ def research_page():
                                     match_score=score_by_asin.get(asin),
                                 )
                                 db.add(amazon_comp)
+
+                            # Auto-update product status to "researched"
+                            if product.status == "imported":
+                                product.status = "researched"
 
                             db.commit()
 

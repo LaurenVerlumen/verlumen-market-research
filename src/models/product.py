@@ -6,12 +6,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.database import Base
 
+# Valid product status values
+PRODUCT_STATUSES = ("imported", "researched", "under_review", "approved", "rejected")
+
 
 class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"), nullable=False)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("categories.id"), nullable=False, index=True)
     alibaba_url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     alibaba_product_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -26,6 +29,7 @@ class Product(Base):
     alibaba_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     amazon_search_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, default="imported")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

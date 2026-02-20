@@ -11,9 +11,9 @@ class AmazonCompetitor(Base):
     __tablename__ = "amazon_competitors"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     search_session_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("search_sessions.id"), nullable=True
+        Integer, ForeignKey("search_sessions.id"), nullable=True, index=True
     )
     asin: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str | None] = mapped_column(Text, nullable=True)

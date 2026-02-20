@@ -11,7 +11,7 @@ class SearchSession(Base):
     __tablename__ = "search_sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("products.id"), nullable=False, index=True)
     search_query: Mapped[str] = mapped_column(Text, nullable=False)
     amazon_domain: Mapped[str | None] = mapped_column(Text, default="amazon.com")
     total_results: Mapped[int | None] = mapped_column(Integer, nullable=True)

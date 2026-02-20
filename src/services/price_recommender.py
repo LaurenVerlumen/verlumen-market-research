@@ -5,6 +5,8 @@ from typing import Optional
 import numpy as np
 from sklearn.cluster import KMeans
 
+from src.services.utils import parse_bought as _parse_bought
+
 
 def recommend_pricing(
     competitors: list[dict],
@@ -137,31 +139,6 @@ def _compute_clusters(prices: list[float]) -> list[float]:
         high = statistics.mean(prices[2 * third :])
         return [round(low, 2), round(mid, 2), round(high, 2)]
 
-
-def _parse_bought(value) -> Optional[int]:
-    """Parse 'X+ bought in past month' or numeric values into an int."""
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, str):
-        # Extract leading number from strings like "1K+ bought in past month"
-        cleaned = value.lower().replace(",", "").strip()
-        if not cleaned:
-            return None
-        # Handle "1K+", "10K+" style
-        if "k" in cleaned:
-            cleaned = cleaned.split("k")[0].strip().rstrip("+").strip()
-            try:
-                return int(float(cleaned) * 1000)
-            except (ValueError, TypeError):
-                return None
-        # Extract first number
-        import re
-        match = re.search(r"(\d+)", cleaned)
-        if match:
-            return int(match.group(1))
-    return None
 
 
 def _estimate_units_at_price(target_price: float, bought_data: list[tuple[float, int]]) -> int:

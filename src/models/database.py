@@ -32,6 +32,12 @@ def _migrate_columns():
                 conn.execute(text(
                     "ALTER TABLE products ADD COLUMN local_image_path TEXT"
                 ))
+        if "status" not in columns:
+            logger.info("Adding status column to products table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE products ADD COLUMN status TEXT DEFAULT 'imported'"
+                ))
     if "amazon_competitors" in inspector.get_table_names():
         columns = {col["name"] for col in inspector.get_columns("amazon_competitors")}
         if "match_score" not in columns:
@@ -48,6 +54,28 @@ def _migrate_columns():
                 ))
 
 
+def _migrate_indexes():
+    """Create indexes on FK columns for existing databases."""
+    _indexes = [
+        ("ix_products_category_id", "products", "category_id"),
+        ("ix_amazon_competitors_product_id", "amazon_competitors", "product_id"),
+        ("ix_amazon_competitors_search_session_id", "amazon_competitors", "search_session_id"),
+        ("ix_search_sessions_product_id", "search_sessions", "product_id"),
+    ]
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    with engine.begin() as conn:
+        for idx_name, table, column in _indexes:
+            if table not in tables:
+                continue
+            existing = {idx["name"] for idx in inspector.get_indexes(table)}
+            if idx_name not in existing:
+                logger.info("Creating index %s on %s.%s", idx_name, table, column)
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({column})"
+                ))
+
+
 def init_db():
     """Create all tables defined by Base subclasses."""
     # Import all models so they register with Base.metadata
@@ -59,3 +87,4 @@ def init_db():
 
     Base.metadata.create_all(bind=engine)
     _migrate_columns()
+    _migrate_indexes()

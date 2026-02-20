@@ -8,6 +8,7 @@ from src.ui.pages.import_page import import_page
 from src.ui.pages.products import products_page
 from src.ui.pages.product_detail import product_detail_page
 from src.ui.pages.research import research_page
+from src.ui.pages.evaluation import evaluation_page
 from src.ui.pages.export_page import export_page
 from src.ui.pages.settings import settings_page
 
@@ -41,6 +42,11 @@ def product_detail_view(product_id: int):
 @ui.page("/research")
 def research_view():
     research_page()
+
+
+@ui.page("/evaluation")
+def evaluation_view():
+    evaluation_page()
 
 
 @ui.page("/export")

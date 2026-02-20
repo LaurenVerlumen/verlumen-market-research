@@ -4,6 +4,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from src.models import get_session, Category, Product, AmazonCompetitor, SearchSession
+from src.services.utils import parse_bought
+from src.services.viability_scorer import calculate_vvs
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 
@@ -49,73 +51,62 @@ def dashboard_page():
 
             # Avg opportunity: average opportunity_score from the latest
             # search session per product (computed by CompetitionAnalyzer).
-            # We approximate via the inverse-competition heuristic stored in
-            # SearchSession: lower avg_reviews + lower competition = higher
-            # opportunity.  Since the session doesn't store opportunity_score
-            # directly, we use avg_price as a rough proxy only when no
-            # better metric is available.  TODO: persist opportunity_score.
             from src.services.competition_analyzer import CompetitionAnalyzer as _CA
             _analyzer = _CA()
 
-            # Gather latest session per product for opportunity calc
+            # Get latest session ID per product in a single subquery
             from sqlalchemy import distinct
-            latest_sessions = (
-                session.query(SearchSession)
-                .order_by(SearchSession.product_id, SearchSession.created_at.desc())
-                .all()
+            latest_session_subq = (
+                session.query(
+                    SearchSession.product_id,
+                    func.max(SearchSession.id).label("max_id"),
+                )
+                .group_by(SearchSession.product_id)
+                .subquery()
             )
-            _seen_products: set[int] = set()
+            latest_session_ids = [
+                row.max_id for row in session.query(latest_session_subq.c.max_id).all()
+            ]
+
+            # Batch-load competitors for all latest sessions at once
             _opp_scores: list[float] = []
-            for ls in latest_sessions:
-                if ls.product_id in _seen_products:
-                    continue
-                _seen_products.add(ls.product_id)
-                comps = (
+            if latest_session_ids:
+                all_comps = (
                     session.query(AmazonCompetitor)
-                    .filter(AmazonCompetitor.search_session_id == ls.id)
+                    .filter(AmazonCompetitor.search_session_id.in_(latest_session_ids))
                     .all()
                 )
-                if comps:
-                    comp_dicts = [
-                        {
-                            "price": c.price, "rating": c.rating,
-                            "review_count": c.review_count,
-                            "is_prime": c.is_prime, "badge": c.badge,
-                            "bought_last_month": c.bought_last_month,
-                        }
-                        for c in comps
-                    ]
-                    analysis = _analyzer.analyze(comp_dicts)
-                    _opp_scores.append(analysis["opportunity_score"])
+                # Group by session
+                comps_by_session: dict[int, list] = {}
+                for c in all_comps:
+                    comps_by_session.setdefault(c.search_session_id, []).append(c)
+
+                for sid in latest_session_ids:
+                    comps = comps_by_session.get(sid, [])
+                    if comps:
+                        comp_dicts = [
+                            {
+                                "price": c.price, "rating": c.rating,
+                                "review_count": c.review_count,
+                                "is_prime": c.is_prime, "badge": c.badge,
+                                "bought_last_month": c.bought_last_month,
+                            }
+                            for c in comps
+                        ]
+                        analysis = _analyzer.analyze(comp_dicts)
+                        _opp_scores.append(analysis["opportunity_score"])
             avg_opportunity = round(sum(_opp_scores) / len(_opp_scores), 1) if _opp_scores else None
 
             # Market size: sum(price * bought_last_month) for competitors
             # that have both values.  bought_last_month is stored as text
             # (e.g. "1K+"), so we parse it into an integer estimate.
-            import re as _re
-
-            def _parse_bought(raw) -> int:
-                """Parse bought_last_month text like '1K+' or '500' into int."""
-                if not raw:
-                    return 0
-                raw = str(raw).strip().lower().replace(",", "").rstrip("+")
-                if raw.endswith("k"):
-                    try:
-                        return int(float(raw[:-1]) * 1000)
-                    except ValueError:
-                        return 0
-                try:
-                    return int(float(raw))
-                except ValueError:
-                    return 0
-
             market_size_total = 0.0
             for c_row in (
                 session.query(AmazonCompetitor.price, AmazonCompetitor.bought_last_month)
                 .filter(AmazonCompetitor.price.isnot(None))
                 .all()
             ):
-                bought = _parse_bought(c_row[1])
+                bought = parse_bought(c_row[1]) or 0
                 if bought > 0:
                     market_size_total += c_row[0] * bought
             market_size = round(market_size_total, 0) if market_size_total > 0 else None
@@ -143,8 +134,8 @@ def dashboard_page():
                 .all()
             )
 
-            # Top opportunities: products with research, ordered by competitor count
-            top_products = (
+            # Top opportunities: products with research, ordered by opportunity_score
+            _top_query = (
                 session.query(
                     Product.id,
                     Product.name,
@@ -156,10 +147,45 @@ def dashboard_page():
                 .join(Category, Category.id == Product.category_id)
                 .join(AmazonCompetitor, AmazonCompetitor.product_id == Product.id)
                 .group_by(Product.id, Product.name, Category.name)
-                .order_by(func.count(AmazonCompetitor.id).desc())
-                .limit(10)
                 .all()
             )
+            # Build a product_id -> comps dict from already-loaded latest-session data
+            _comps_by_product: dict[int, list] = {}
+            if latest_session_ids:
+                for sid in latest_session_ids:
+                    for c in comps_by_session.get(sid, []):
+                        _comps_by_product.setdefault(c.product_id, []).append(c)
+
+            _top_with_score = []
+            _vvs_by_product: dict[int, float] = {}
+            for tp in _top_query:
+                tp_comps = _comps_by_product.get(tp.id, [])
+                if tp_comps:
+                    _tp_dicts = [
+                        {
+                            "price": c.price, "rating": c.rating,
+                            "review_count": c.review_count,
+                            "is_prime": c.is_prime, "badge": c.badge,
+                            "bought_last_month": c.bought_last_month,
+                            "position": c.position,
+                        }
+                        for c in tp_comps
+                    ]
+                    _tp_analysis = _analyzer.analyze(_tp_dicts)
+                    _top_with_score.append((tp, _tp_analysis["opportunity_score"]))
+                    # Compute VVS for dashboard display
+                    try:
+                        # Look up the product for alibaba_cost
+                        _tp_product = session.query(Product).filter(Product.id == tp.id).first()
+                        _tp_alibaba = _tp_product.alibaba_price_min if _tp_product else None
+                        _tp_vvs = calculate_vvs(_tp_product, _tp_dicts, alibaba_cost=_tp_alibaba)
+                        _vvs_by_product[tp.id] = _tp_vvs.get("vvs_score", 0.0)
+                    except Exception:
+                        _vvs_by_product[tp.id] = 0.0
+                else:
+                    _top_with_score.append((tp, 0.0))
+            _top_with_score.sort(key=lambda x: x[1], reverse=True)
+            top_products = [item[0] for item in _top_with_score[:10]]
 
             # Recent searches with product name
             recent = (
@@ -256,15 +282,18 @@ def dashboard_page():
                 columns = [
                     {"name": "product", "label": "Product", "field": "product", "align": "left"},
                     {"name": "category", "label": "Category", "field": "category", "align": "left"},
+                    {"name": "vvs", "label": "VVS", "field": "vvs", "align": "center", "sortable": True},
                     {"name": "avg_price", "label": "Avg Amazon Price", "field": "avg_price", "align": "right"},
                     {"name": "competitors", "label": "Competitors", "field": "competitors", "align": "right"},
                     {"name": "avg_rating", "label": "Avg Rating", "field": "avg_rating", "align": "right"},
                 ]
                 rows = []
                 for tp in top_products:
+                    vvs_val = _vvs_by_product.get(tp.id, 0.0)
                     rows.append({
                         "product": tp.name,
                         "category": tp.category_name,
+                        "vvs": f"{vvs_val:.1f}" if vvs_val > 0 else "-",
                         "avg_price": f"${tp.avg_price:.2f}" if tp.avg_price else "N/A",
                         "competitors": tp.comp_count,
                         "avg_rating": f"{tp.avg_rating:.1f}" if tp.avg_rating else "N/A",

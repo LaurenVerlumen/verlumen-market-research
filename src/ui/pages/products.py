@@ -2,36 +2,30 @@
 import asyncio
 
 from nicegui import ui
+from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
 from config import SERPAPI_KEY
 from src.models import get_session, init_db, Category, Product, AmazonCompetitor, SearchSession
 from src.services import parse_alibaba_url, ImageFetcher, download_image
+from src.ui.components.helpers import avatar_color as _avatar_color, product_image_src as _product_image_src, format_price as _format_price
 from src.ui.layout import build_layout
 
-
-def _product_image_src(product) -> str | None:
-    """Return the best image source URL for a product (local preferred)."""
-    if product.local_image_path:
-        return f"/images/{product.local_image_path}"
-    if product.alibaba_image_url:
-        return product.alibaba_image_url
-    return None
-
-
-# Predefined palette for letter-avatar backgrounds
-_AVATAR_COLORS = [
-    "#E57373", "#F06292", "#BA68C8", "#9575CD", "#7986CB",
-    "#64B5F6", "#4FC3F7", "#4DD0E1", "#4DB6AC", "#81C784",
-    "#AED581", "#DCE775", "#FFD54F", "#FFB74D", "#FF8A65",
-    "#A1887F", "#90A4AE",
-]
-
-
-def _avatar_color(name: str) -> str:
-    """Return a deterministic color based on the first letter of *name*."""
-    idx = ord(name[0].upper()) % len(_AVATAR_COLORS) if name else 0
-    return _AVATAR_COLORS[idx]
+# Status badge colors
+_STATUS_COLORS = {
+    "imported": "grey-5",
+    "researched": "blue",
+    "under_review": "warning",
+    "approved": "positive",
+    "rejected": "negative",
+}
+_STATUS_LABELS = {
+    "imported": "Imported",
+    "researched": "Researched",
+    "under_review": "Under Review",
+    "approved": "Approved",
+    "rejected": "Rejected",
+}
 
 
 def products_page():
@@ -492,11 +486,60 @@ def products_page():
 
             view_toggle.on_value_change(_persist_view)
 
+            # --- Pagination state ---
+            _page_state = {"current": 1, "size": 20, "total": 0}
+
+            with ui.row().classes("w-full items-center gap-3"):
+                page_size_select = ui.select(
+                    {10: "10 / page", 20: "20 / page", 50: "50 / page", 100: "100 / page"},
+                    value=20,
+                    label="Per page",
+                ).props("outlined dense").classes("w-36")
+                pagination_label = ui.label("").classes("text-body2 text-secondary flex-1")
+                prev_btn = ui.button(icon="chevron_left").props("flat dense round")
+                page_num_label = ui.label("1").classes("text-body2 font-bold")
+                next_btn = ui.button(icon="chevron_right").props("flat dense round")
+
+            def _go_prev():
+                if _page_state["current"] > 1:
+                    _page_state["current"] -= 1
+                    refresh_products()
+
+            def _go_next():
+                total_pages = max(1, (_page_state["total"] + _page_state["size"] - 1) // _page_state["size"])
+                if _page_state["current"] < total_pages:
+                    _page_state["current"] += 1
+                    refresh_products()
+
+            def _on_page_size_change(_):
+                _page_state["size"] = page_size_select.value
+                _page_state["current"] = 1
+                refresh_products()
+
+            prev_btn.on_click(_go_prev)
+            next_btn.on_click(_go_next)
+            page_size_select.on_value_change(_on_page_size_change)
+
             # --- Product container ---
             product_container = ui.column().classes("w-full gap-2")
 
-            def _get_filtered_products(db):
+            def _get_comp_counts(db) -> dict[int, int]:
+                """Batch-load competitor counts for all products in a single query."""
+                rows = (
+                    db.query(
+                        AmazonCompetitor.product_id,
+                        func.count(AmazonCompetitor.id),
+                    )
+                    .group_by(AmazonCompetitor.product_id)
+                    .all()
+                )
+                return {pid: cnt for pid, cnt in rows}
+
+            def _get_filtered_products(db, comp_counts: dict[int, int] | None = None):
                 """Query and filter products based on current filter state."""
+                if comp_counts is None:
+                    comp_counts = _get_comp_counts(db)
+
                 query = db.query(Product).options(
                     joinedload(Product.category),
                     joinedload(Product.search_sessions),
@@ -527,20 +570,17 @@ def products_page():
                 elif status_select.value == "Pending":
                     products = [p for p in products if len(p.search_sessions) == 0]
 
-                # Competitor count range filter
+                # Competitor count range filter (using batch-loaded counts)
                 comp_val = comp_range_filter.value
                 if comp_val != "All":
-                    def _comp_count(p):
-                        return db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
-
                     if comp_val == "0":
-                        products = [p for p in products if _comp_count(p) == 0]
+                        products = [p for p in products if comp_counts.get(p.id, 0) == 0]
                     elif comp_val == "1-10":
-                        products = [p for p in products if 1 <= _comp_count(p) <= 10]
+                        products = [p for p in products if 1 <= comp_counts.get(p.id, 0) <= 10]
                     elif comp_val == "10-50":
-                        products = [p for p in products if 10 < _comp_count(p) <= 50]
+                        products = [p for p in products if 10 < comp_counts.get(p.id, 0) <= 50]
                     elif comp_val == "50+":
-                        products = [p for p in products if _comp_count(p) > 50]
+                        products = [p for p in products if comp_counts.get(p.id, 0) > 50]
 
                 # Sort
                 sort_val = sort_select.value
@@ -552,16 +592,14 @@ def products_page():
                     products.sort(key=lambda p: p.created_at or p.id, reverse=True)
                 elif sort_val == "Most competitors":
                     products.sort(
-                        key=lambda p: db.query(AmazonCompetitor).filter_by(product_id=p.id).count(),
+                        key=lambda p: comp_counts.get(p.id, 0),
                         reverse=True,
                     )
                 elif sort_val == "Best Opportunity":
                     def _opp_score(p):
                         if p.search_sessions:
                             latest = p.search_sessions[-1]
-                            # Use avg_rating as proxy; higher opportunity if lower competition
-                            # We compute a simple score from the latest session data
-                            return -(latest.avg_reviews or 0)  # Lower avg reviews = better opportunity
+                            return -(latest.avg_reviews or 0)
                         return 0
                     products.sort(key=_opp_score)
                 elif sort_val == "Category":
@@ -614,10 +652,11 @@ def products_page():
                                             p.category.name if p.category else "",
                                             color="blue-2",
                                         ).props("outline")
-                                        if is_researched:
-                                            ui.badge("Researched", color="positive")
-                                        else:
-                                            ui.badge("Pending", color="grey-5")
+                                        _st = getattr(p, "status", None) or "imported"
+                                        ui.badge(
+                                            _STATUS_LABELS.get(_st, _st.replace("_", " ").title()),
+                                            color=_STATUS_COLORS.get(_st, "grey-5"),
+                                        )
 
                             # Stats row
                             with ui.row().classes("w-full gap-4 items-center"):
@@ -698,10 +737,11 @@ def products_page():
                                         p.category.name if p.category else "",
                                         color="blue-2",
                                     ).props("outline")
-                                    if is_researched:
-                                        ui.badge("Researched", color="positive")
-                                    else:
-                                        ui.badge("Pending", color="grey-5")
+                                    _st = getattr(p, "status", None) or "imported"
+                                    ui.badge(
+                                        _STATUS_LABELS.get(_st, _st.replace("_", " ").title()),
+                                        color=_STATUS_COLORS.get(_st, "grey-5"),
+                                    )
                                     ui.label(
                                         f"{comp_count} competitor{'s' if comp_count != 1 else ''}"
                                     ).classes("text-caption text-secondary")
@@ -731,8 +771,26 @@ def products_page():
                 db = get_session()
                 try:
                     total_count = db.query(Product).count()
-                    products = _get_filtered_products(db)
-                    count_label.text = f"Showing {len(products)} of {total_count} products"
+                    comp_counts = _get_comp_counts(db)
+                    all_filtered = _get_filtered_products(db, comp_counts)
+                    filtered_count = len(all_filtered)
+
+                    # Pagination
+                    page_size = _page_state["size"]
+                    _page_state["total"] = filtered_count
+                    total_pages = max(1, (filtered_count + page_size - 1) // page_size)
+                    if _page_state["current"] > total_pages:
+                        _page_state["current"] = total_pages
+                    current_page = _page_state["current"]
+                    start = (current_page - 1) * page_size
+                    end = start + page_size
+                    products = all_filtered[start:end]
+
+                    count_label.text = f"Showing {start + 1}-{min(end, filtered_count)} of {filtered_count} products ({total_count} total)"
+                    pagination_label.text = f"Page {current_page} of {total_pages}"
+                    page_num_label.text = str(current_page)
+                    prev_btn.set_enabled(current_page > 1)
+                    next_btn.set_enabled(current_page < total_pages)
 
                     with product_container:
                         if not products:
@@ -745,7 +803,7 @@ def products_page():
 
                         if is_table:
                             for p in products:
-                                comp_count = db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
+                                comp_count = comp_counts.get(p.id, 0)
                                 session_count = len(p.search_sessions)
                                 _render_product_row(p, comp_count, session_count, db)
                         else:
@@ -755,18 +813,31 @@ def products_page():
                                 "grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))"
                             ):
                                 for p in products:
-                                    comp_count = db.query(AmazonCompetitor).filter_by(product_id=p.id).count()
+                                    comp_count = comp_counts.get(p.id, 0)
                                     session_count = len(p.search_sessions)
                                     _render_product_card(p, comp_count, session_count, db)
                 finally:
                     db.close()
 
-            # Wire up all filter controls to refresh
-            search_input.on("input", lambda _: refresh_products())
-            filter_select.on_value_change(lambda _: refresh_products())
-            status_select.on_value_change(lambda _: refresh_products())
-            profit_filter.on_value_change(lambda _: refresh_products())
-            comp_range_filter.on_value_change(lambda _: refresh_products())
+            # Wire up all filter controls to refresh (reset to page 1)
+            def _filter_and_reset(_=None):
+                _page_state["current"] = 1
+                refresh_products()
+
+            _search_timer = {"ref": None}
+
+            def _debounced_search(_):
+                if _search_timer["ref"] is not None:
+                    _search_timer["ref"].cancel()
+                _search_timer["ref"] = ui.timer(
+                    0.3, lambda: _filter_and_reset(), once=True,
+                )
+
+            search_input.on("input", _debounced_search)
+            filter_select.on_value_change(_filter_and_reset)
+            status_select.on_value_change(_filter_and_reset)
+            profit_filter.on_value_change(_filter_and_reset)
+            comp_range_filter.on_value_change(_filter_and_reset)
             sort_select.on_value_change(lambda _: refresh_products())
             view_toggle.on_value_change(lambda _: refresh_products())
 
@@ -808,11 +879,3 @@ def _delete_button(product_id: int, product_name: str, on_deleted):
     ).tooltip("Delete product")
 
 
-def _format_price(pmin, pmax) -> str:
-    if pmin is not None and pmax is not None:
-        return f"${pmin:.2f} - ${pmax:.2f}"
-    if pmin is not None:
-        return f"${pmin:.2f}"
-    if pmax is not None:
-        return f"${pmax:.2f}"
-    return "-"
