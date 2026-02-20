@@ -2,6 +2,10 @@
 import statistics
 from typing import Optional
 
+from src.services.match_scorer import score_matches
+from src.services.price_recommender import recommend_pricing
+from src.services.demand_estimator import estimate_demand
+
 
 class CompetitionAnalyzer:
     """Compute competition and opportunity metrics from Amazon competitor data."""
@@ -81,6 +85,50 @@ class CompetitionAnalyzer:
             "suggested_price_min": round(suggested_min, 2),
             "suggested_price_max": round(suggested_max, 2),
         }
+
+    def analyze_enhanced(
+        self,
+        competitors: list[dict],
+        product_name: str,
+        alibaba_cost: Optional[float] = None,
+    ) -> dict:
+        """Run full analysis including ML-powered match scoring, pricing, and demand.
+
+        Extends the base ``analyze()`` output with match scores, pricing
+        strategies, and demand estimates.
+
+        Parameters
+        ----------
+        competitors : list[dict]
+            Competitor dicts from ``AmazonSearchService.search_products()``.
+        product_name : str
+            The source product name (e.g. Alibaba title) used for relevance scoring.
+        alibaba_cost : float | None
+            Optional unit cost for margin calculations.
+
+        Returns
+        -------
+        dict  with all keys from ``analyze()`` plus:
+            - match_scores: list of competitors with ``match_score`` added
+            - pricing_strategies: pricing recommendation dict
+            - demand_estimates: market demand estimation dict
+        """
+        # Base analysis (unchanged)
+        result = self.analyze(competitors)
+
+        # Work on a copy to avoid mutating the caller's list
+        scored_competitors = [dict(c) for c in competitors]
+
+        # ML services
+        match_scores = score_matches(product_name, scored_competitors)
+        pricing_strategies = recommend_pricing(competitors, alibaba_cost)
+        demand_estimates = estimate_demand(competitors)
+
+        result["match_scores"] = match_scores
+        result["pricing_strategies"] = pricing_strategies
+        result["demand_estimates"] = demand_estimates
+
+        return result
 
     # ------------------------------------------------------------------
     # Internal scoring helpers

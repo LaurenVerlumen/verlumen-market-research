@@ -1,11 +1,15 @@
 """Product detail page - Alibaba info + Amazon competition analysis."""
 import asyncio
+from datetime import datetime
 
 from nicegui import ui
 
 from config import SERPAPI_KEY
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
-from src.services import ImageFetcher, download_image, save_uploaded_image
+from src.services import (
+    ImageFetcher, download_image, save_uploaded_image,
+    AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
+)
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
@@ -192,10 +196,45 @@ def product_detail_page(product_id: int):
                                 "Alibaba Product ID",
                                 product.alibaba_product_id or "N/A",
                             )
-                            _info_row(
-                                "Amazon Search Query",
-                                product.amazon_search_query or product.name,
+
+                            # --- Feature 1: Editable Amazon Search Query ---
+                            ui.label("Amazon Search Query").classes(
+                                "text-caption text-secondary font-medium"
                             )
+                            with ui.row().classes("items-center gap-1 w-full"):
+                                search_query_input = ui.input(
+                                    value=product.amazon_search_query or product.name,
+                                    placeholder="Amazon search query...",
+                                ).props("dense outlined").classes("text-body2 flex-1")
+
+                                def _save_search_query(e, pid=product.id):
+                                    db = get_session()
+                                    try:
+                                        p = db.query(Product).filter(Product.id == pid).first()
+                                        if p:
+                                            p.amazon_search_query = e.sender.value.strip() or None
+                                            db.commit()
+                                    finally:
+                                        db.close()
+
+                                search_query_input.on("blur", _save_search_query)
+
+                                # --- Feature 5: Query Optimizer button ---
+                                try:
+                                    from src.services.query_optimizer import suggest_queries as _suggest_queries_fn
+                                    _has_query_optimizer = True
+                                except ImportError:
+                                    _has_query_optimizer = False
+
+                                if _has_query_optimizer:
+                                    ui.button(
+                                        icon="auto_fix_high",
+                                    ).props(
+                                        "flat round dense size=sm color=primary"
+                                    ).tooltip("Suggest optimized queries").on(
+                                        "click", lambda: _run_query_optimizer()
+                                    )
+
                             if product.alibaba_price_min is not None or product.alibaba_price_max is not None:
                                 _info_row(
                                     "Alibaba Price",
@@ -225,12 +264,59 @@ def product_detail_page(product_id: int):
                             supplier_input.on("blur", _save_supplier)
                             if product.alibaba_moq:
                                 _info_row("MOQ", str(product.alibaba_moq))
-                            if product.notes:
-                                _info_row("Notes", product.notes)
                             if product.local_image_path:
                                 _info_row("Image", "Saved locally")
                             elif product.alibaba_image_url:
                                 _info_row("Image", "CDN only (not saved locally)")
+
+                        # Query suggestions container (outside the grid, inside the column)
+                        query_suggestions_row = ui.row().classes(
+                            "gap-2 flex-wrap"
+                        )
+
+                        if _has_query_optimizer:
+                            async def _run_query_optimizer():
+                                current_query = search_query_input.value.strip()
+                                if not current_query:
+                                    ui.notify("Enter a search query first.", type="warning")
+                                    return
+                                try:
+                                    suggestions = await asyncio.get_event_loop().run_in_executor(
+                                        None, _suggest_queries_fn, current_query,
+                                    )
+                                except Exception as exc:
+                                    ui.notify(f"Query optimization failed: {exc}", type="negative")
+                                    return
+                                query_suggestions_row.clear()
+                                with query_suggestions_row:
+                                    for s in suggestions:
+                                        def _use(q=s):
+                                            search_query_input.value = q
+                                            query_suggestions_row.clear()
+                                        ui.chip(s, on_click=_use).props(
+                                            "clickable outline color=primary"
+                                        )
+
+                        # --- Feature 2: Notes textarea ---
+                        ui.label("Notes").classes(
+                            "text-subtitle2 font-medium mt-2"
+                        )
+                        notes_area = ui.textarea(
+                            value=product.notes or "",
+                            placeholder="Add notes about this product...",
+                        ).props("outlined").classes("w-full")
+
+                        def _save_notes(e, pid=product.id):
+                            db = get_session()
+                            try:
+                                p = db.query(Product).filter(Product.id == pid).first()
+                                if p:
+                                    p.notes = e.sender.value.strip() or None
+                                    db.commit()
+                            finally:
+                                db.close()
+
+                        notes_area.on("blur", _save_notes)
 
                         # Prominent Alibaba link button
                         if product.alibaba_url:
@@ -240,6 +326,77 @@ def product_detail_page(product_id: int):
                                 ui.button(
                                     "View on Alibaba", icon="open_in_new",
                                 ).props("color=accent")
+
+            # --- Feature 3: Re-research button helper ---
+            async def _rerun_research(pid=product.id):
+                """Run Amazon search + analysis for this single product."""
+                if not SERPAPI_KEY:
+                    ui.notify("SERPAPI_KEY not configured.", type="negative")
+                    return
+
+                rerun_btn.disable()
+                rerun_status.text = "Searching Amazon..."
+
+                search_service = AmazonSearchService(api_key=SERPAPI_KEY)
+                analyzer = CompetitionAnalyzer()
+
+                query = search_query_input.value.strip() or product.name
+
+                try:
+                    results = await asyncio.get_event_loop().run_in_executor(
+                        None, search_service.search_products, query,
+                    )
+                    analysis = analyzer.analyze(results["competitors"])
+
+                    db = get_session()
+                    try:
+                        new_session = SearchSession(
+                            product_id=pid,
+                            search_query=query,
+                            amazon_domain="amazon.com",
+                            total_results=results["total_organic"] + results["total_sponsored"],
+                            organic_results=results["total_organic"],
+                            sponsored_results=results["total_sponsored"],
+                            avg_price=analysis["price_mean"],
+                            avg_rating=analysis["avg_rating"],
+                            avg_reviews=analysis["avg_reviews"],
+                        )
+                        db.add(new_session)
+                        db.flush()
+
+                        for comp in results["competitors"]:
+                            amazon_comp = AmazonCompetitor(
+                                product_id=pid,
+                                search_session_id=new_session.id,
+                                asin=comp.get("asin", ""),
+                                title=comp.get("title"),
+                                price=comp.get("price"),
+                                rating=comp.get("rating"),
+                                review_count=comp.get("review_count"),
+                                bought_last_month=comp.get("bought_last_month"),
+                                is_prime=comp.get("is_prime", False),
+                                badge=comp.get("badge"),
+                                thumbnail_url=comp.get("thumbnail_url"),
+                                amazon_url=comp.get("amazon_url"),
+                                is_sponsored=comp.get("is_sponsored", False),
+                                position=comp.get("position"),
+                            )
+                            db.add(amazon_comp)
+
+                        db.commit()
+                    finally:
+                        db.close()
+
+                    ui.notify(
+                        f"Research complete! Found {results['total_organic']} organic results.",
+                        type="positive",
+                    )
+                    ui.navigate.to(f"/products/{pid}")
+
+                except AmazonSearchError as exc:
+                    rerun_status.text = f"Error: {exc}"
+                    rerun_btn.enable()
+                    ui.notify(f"Research failed: {exc}", type="negative")
 
             # Amazon Competition Analysis
             latest_session = (
@@ -255,14 +412,31 @@ def product_detail_page(product_id: int):
                     ui.label(
                         "No research data yet. Run Amazon Research to see competition analysis."
                     ).classes("text-body2 text-secondary")
-                    ui.button(
-                        "Run Research", icon="search",
-                        on_click=lambda: ui.navigate.to("/research"),
-                    ).props("color=positive")
+                    with ui.row().classes("gap-2"):
+                        ui.button(
+                            "Run Research", icon="search",
+                            on_click=lambda: ui.navigate.to("/research"),
+                        ).props("color=positive")
+                        rerun_btn = ui.button(
+                            "Run for this product", icon="refresh",
+                            on_click=_rerun_research,
+                        ).props("color=primary outline")
+                        rerun_status = ui.label("").classes(
+                            "text-caption text-secondary self-center"
+                        )
                 return
 
-            # Metrics
-            ui.label("Amazon Competition Analysis").classes("text-subtitle1 font-bold")
+            # Metrics header with re-research button
+            with ui.row().classes("items-center gap-4 w-full"):
+                ui.label("Amazon Competition Analysis").classes("text-subtitle1 font-bold")
+                rerun_btn = ui.button(
+                    "Re-run Research", icon="refresh",
+                    on_click=_rerun_research,
+                ).props("flat dense color=primary size=sm")
+                rerun_status = ui.label("").classes(
+                    "text-caption text-secondary"
+                )
+
             ui.label(
                 f"Last researched: "
                 f"{latest_session.created_at.strftime('%Y-%m-%d %H:%M') if latest_session.created_at else 'N/A'}"
@@ -313,8 +487,100 @@ def product_detail_page(product_id: int):
                     for c in competitors
                 ]
                 competitor_table(comp_data)
+
+            # --- Feature 4: AI Insights card ---
+            _render_ai_insights(product, competitors if competitors else [])
+
         finally:
             session.close()
+
+
+def _render_ai_insights(product, competitors: list):
+    """Render the AI Insights card if ML services are available."""
+    try:
+        from src.services.match_scorer import score_matches
+        from src.services.price_recommender import recommend_pricing
+        from src.services.demand_estimator import estimate_demand
+    except ImportError:
+        return  # ML services not available yet
+
+    if not competitors:
+        return
+
+    comp_data = []
+    for c in competitors:
+        if hasattr(c, "asin"):
+            comp_data.append({
+                "asin": c.asin, "title": c.title, "price": c.price,
+                "rating": c.rating, "review_count": c.review_count,
+                "bought_last_month": c.bought_last_month,
+                "badge": c.badge, "is_prime": c.is_prime,
+                "is_sponsored": c.is_sponsored,
+            })
+        elif isinstance(c, dict):
+            comp_data = competitors
+            break
+
+    try:
+        match_results = score_matches(product.name, comp_data)
+        pricing = recommend_pricing(
+            alibaba_min=product.alibaba_price_min,
+            alibaba_max=product.alibaba_price_max,
+            competitors=comp_data,
+        )
+        demand = estimate_demand(comp_data)
+    except Exception:
+        return  # Silently skip if ML fails
+
+    with ui.card().classes("w-full p-4 mt-4"):
+        with ui.row().classes("items-center gap-2 mb-3"):
+            ui.icon("auto_awesome").classes("text-primary")
+            ui.label("AI Insights").classes("text-subtitle1 font-bold")
+
+        # Price strategy cards
+        if pricing and pricing.get("strategies"):
+            ui.label("Price Recommendations").classes("text-subtitle2 font-medium mb-2")
+            with ui.row().classes("gap-4 flex-wrap mb-4"):
+                for strategy in pricing["strategies"]:
+                    with ui.card().classes("p-3").style("min-width:200px"):
+                        ui.label(strategy.get("name", "Strategy")).classes(
+                            "text-caption font-bold text-uppercase"
+                        )
+                        ui.label(
+                            f"${strategy['price']:.2f}" if strategy.get("price") else "N/A"
+                        ).classes("text-h6 text-positive font-bold")
+                        if strategy.get("rationale"):
+                            ui.label(strategy["rationale"]).classes(
+                                "text-caption text-secondary"
+                            )
+
+        # Demand estimation
+        if demand:
+            ui.label("Demand Estimation").classes("text-subtitle2 font-medium mb-2")
+            with ui.row().classes("gap-4 flex-wrap mb-4"):
+                if demand.get("tam") is not None:
+                    stats_card(
+                        "Total Addressable Market",
+                        f"${demand['tam']:,.0f}",
+                        "trending_up", "primary",
+                    )
+                if demand.get("avg_revenue_per_seller") is not None:
+                    stats_card(
+                        "Avg Revenue / Seller",
+                        f"${demand['avg_revenue_per_seller']:,.0f}",
+                        "payments", "positive",
+                    )
+
+        # Match relevance summary
+        if match_results:
+            direct_matches = sum(
+                1 for m in match_results if m.get("is_direct_match", False)
+            )
+            total = len(match_results)
+            ui.label("Match Relevance").classes("text-subtitle2 font-medium mb-2")
+            ui.label(
+                f"{direct_matches} of {total} competitors are direct matches"
+            ).classes("text-body2 text-secondary")
 
 
 def _info_row(label: str, value: str, is_link: bool = False):
