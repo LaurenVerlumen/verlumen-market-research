@@ -1,8 +1,8 @@
 """Shared layout: header, sidebar navigation, and content area."""
 from pathlib import Path
-from urllib.parse import quote
 
 from nicegui import app, ui
+from sqlalchemy import func
 
 from src.models.database import get_session
 from src.models.category import Category
@@ -70,6 +70,7 @@ def build_layout(title: str = "Verlumen Market Research"):
             ui.label("Market Research").classes("text-subtitle1 text-white")
 
         # Global search
+        from urllib.parse import quote
         _search = ui.input(placeholder="Search products...").classes("w-64").props(
             "dark dense standout='bg-white/10' input-class='text-white'"
         )
@@ -86,20 +87,20 @@ def build_layout(title: str = "Verlumen Market Research"):
 
     # Left drawer (sidebar nav)
     with ui.left_drawer(value=True).classes("bg-grey-1") as drawer:
-        drawer.props("width=220 bordered")
+        drawer.props("width=260 bordered")
         ui.element("div").classes("h-3")
 
         _nav_link("Dashboard", "dashboard", "/")
         _nav_link("Products", "inventory_2", "/products")
 
-        # Refreshable category sub-links
+        # Refreshable category sub-links (hierarchical tree)
         @ui.refreshable
         def _category_nav():
-            categories = _load_categories()
-            if categories:
-                with ui.column().classes("w-full pl-6 gap-0"):
-                    for cat in categories:
-                        _nav_sub_link(cat["name"], cat["count"])
+            tree = _load_category_tree()
+            if tree:
+                with ui.column().classes("w-full pl-4 gap-0"):
+                    for node in tree:
+                        _render_nav_node(node, depth=0)
 
         _category_nav()
         _nav_categories_refreshable = _category_nav
@@ -125,19 +126,81 @@ def refresh_nav_categories():
             pass
 
 
-def _load_categories() -> list[dict]:
-    """Load categories with product counts for the nav."""
+def _load_category_tree() -> list[dict]:
+    """Load categories as nested dicts with product counts for the nav.
+
+    Only includes categories that have products (directly or via descendants).
+    Returns: [{id, name, count, total_count, children: [...]}]
+    """
     from src.models import Product
     db = get_session()
     try:
-        cats = db.query(Category).order_by(Category.name).all()
+        # Single query for all product counts
+        count_rows = (
+            db.query(Product.category_id, func.count(Product.id))
+            .group_by(Product.category_id)
+            .all()
+        )
+        prod_counts = {cid: cnt for cid, cnt in count_rows}
+
+        # Load root categories
+        roots = (
+            db.query(Category)
+            .filter(Category.parent_id.is_(None))
+            .order_by(Category.sort_order, Category.name)
+            .all()
+        )
+
+        def _build_node(cat):
+            own_count = prod_counts.get(cat.id, 0)
+            children = []
+            for child in cat.children:
+                child_node = _build_node(child)
+                if child_node is not None:
+                    children.append(child_node)
+            total_count = own_count + sum(c["total_count"] for c in children)
+            # Skip entirely if no products in this subtree
+            if total_count == 0:
+                return None
+            return {
+                "id": cat.id,
+                "name": cat.name,
+                "count": own_count,
+                "total_count": total_count,
+                "children": children,
+            }
+
         result = []
-        for c in cats:
-            count = db.query(Product).filter(Product.category_id == c.id).count()
-            result.append({"name": c.name, "count": count})
+        for r in roots:
+            node = _build_node(r)
+            if node is not None:
+                result.append(node)
         return result
     finally:
         db.close()
+
+
+def _render_nav_node(node, depth=0):
+    """Render a category node in the sidebar nav as a simple indented link."""
+    indent = depth * 16
+
+    # Show the category itself as a clickable link
+    count = node["total_count"]
+    with ui.link(target=f"/products?category_id={node['id']}").classes("no-underline w-full"):
+        with ui.row().classes(
+            "items-center gap-2 px-3 py-1 rounded w-full "
+            "hover:bg-blue-50 cursor-pointer"
+        ).style(f"min-height: 28px; padding-left: {indent}px"):
+            icon = "folder" if node["children"] else "label"
+            ui.icon(icon, size="xs").classes("text-accent")
+            ui.label(node["name"]).classes("text-body2 text-secondary flex-1")
+            ui.badge(str(count), color="grey-4").props(
+                "rounded dense"
+            ).classes("text-grey-8")
+
+    # Render children indented below
+    for child in node["children"]:
+        _render_nav_node(child, depth + 1)
 
 
 def _nav_link(label: str, icon: str, path: str):
@@ -151,16 +214,3 @@ def _nav_link(label: str, icon: str, path: str):
             ui.label(label).classes("text-body1 text-secondary")
 
 
-def _nav_sub_link(name: str, count: int):
-    """Render a category sub-link under Products."""
-    encoded_path = f"/products?category={quote(name)}"
-    with ui.link(target=encoded_path).classes("no-underline w-full"):
-        with ui.row().classes(
-            "items-center gap-2 px-3 py-1 rounded w-full "
-            "hover:bg-blue-50 cursor-pointer"
-        ).style("min-height: 32px"):
-            ui.icon("label", size="xs").classes("text-accent")
-            ui.label(name).classes("text-body2 text-secondary flex-1")
-            ui.badge(str(count), color="grey-4").props(
-                "rounded dense"
-            ).classes("text-grey-8")

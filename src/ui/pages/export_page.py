@@ -92,19 +92,31 @@ def export_page():
                 "text-caption text-secondary mb-2"
             )
 
-            # Load categories for filter dropdown
+            # Load categories for filter dropdown (hierarchical)
             _cat_session = get_session()
             try:
-                _cat_names = ["All"] + [
-                    c.name for c in _cat_session.query(Category).order_by(Category.name).all()
-                ]
+                _all_cats = (
+                    _cat_session.query(Category)
+                    .order_by(Category.sort_order, Category.name)
+                    .all()
+                )
+                _cat_options = {"all": "All Categories"}
+
+                def _build_export_cat_options(cats, depth=0):
+                    for c in cats:
+                        indent = "\u00A0\u00A0\u00A0\u00A0" * depth
+                        _cat_options[str(c.id)] = f"{indent}{c.name}"
+                        _build_export_cat_options(c.children, depth + 1)
+
+                _roots = [c for c in _all_cats if c.parent_id is None]
+                _build_export_cat_options(_roots)
             finally:
                 _cat_session.close()
 
             with ui.row().classes("gap-4 flex-wrap items-end"):
                 export_cat_filter = ui.select(
-                    _cat_names, value="All", label="Category",
-                ).props("outlined dense").classes("w-48")
+                    _cat_options, value="all", label="Category",
+                ).props("outlined dense").classes("w-56")
 
                 export_status_filter = ui.select(
                     ["All", "Imported", "Researched", "Under Review", "Approved", "Rejected"],
@@ -134,12 +146,16 @@ def export_page():
                     .options(joinedload(Product.category))
                 )
 
-                # Apply export filters
+                # Apply export filters (hierarchical - includes descendants)
                 _cat_val = export_cat_filter.value
-                if _cat_val != "All":
-                    _cat_obj = session.query(Category).filter_by(name=_cat_val).first()
-                    if _cat_obj:
-                        query = query.filter(Product.category_id == _cat_obj.id)
+                if _cat_val != "all":
+                    try:
+                        _cat_obj = session.query(Category).filter_by(id=int(_cat_val)).first()
+                        if _cat_obj:
+                            _all_ids = _cat_obj.get_all_ids()
+                            query = query.filter(Product.category_id.in_(_all_ids))
+                    except (ValueError, TypeError):
+                        pass
 
                 _status_map = {
                     "Imported": "imported",

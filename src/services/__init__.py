@@ -1,6 +1,7 @@
 """Services package."""
 from src.services.alibaba_parser import parse_alibaba_url
 from src.services.amazon_search import AmazonSearchError, AmazonSearchService
+from src.services.category_helpers import get_search_context
 from src.services.competition_analyzer import CompetitionAnalyzer
 from src.services.demand_estimator import estimate_demand
 from src.services.excel_exporter import ExcelExporter
@@ -24,6 +25,7 @@ __all__ = [
     "CompetitionAnalyzer",
     "ExcelExporter",
     "export_pdf",
+    "get_search_context",
     "ImageFetcher",
     "download_image",
     "save_uploaded_image",

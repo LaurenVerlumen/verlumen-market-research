@@ -39,7 +39,7 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 ### Core Workflow
 - **Excel Import** - Upload or auto-detect your Verlumen Product Research spreadsheet
 - **Alibaba URL Parsing** - Automatically extracts product names from Alibaba URLs
-- **Amazon Competition Search** - Multi-page SerpAPI search (40-60 results) with department filtering
+- **Amazon Competition Search** - Multi-page SerpAPI search (40-60 results) with department filtering, subcategory query enhancement
 - **Multi-Marketplace** - Research on amazon.com, .co.uk, .de, .ca, .co.jp, .es, .fr, .it
 - **Competition Scoring** - Automated 0-100 competition and opportunity scores
 - **VVS Viability Score** - 5-dimension GO/NO-GO verdict (demand, competition, profitability, market quality, differentiation)
@@ -47,6 +47,7 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 ### Product Management
 - **Smart Dashboard** - Action widgets, VVS-enriched tables, category performance, activity feed
 - **Global Search** - Search any product from the header bar
+- **Hierarchical Categories** - Amazon-style category tree (e.g. Toys & Games > Puzzles > 3D Puzzles), move/re-parent, per-category department, subcategory search enhancement
 - **Product Dashboard** - Browse by category with thumbnails, search, filter, sort, bulk operations
 - **Tabbed Product Detail** - 4 focused tabs: Overview, Competitors, Analysis, History
 - **Decision Log** - Timestamped entries per product, auto-logs status changes, manual notes
@@ -116,8 +117,8 @@ docker-compose up -d
 
 ## Usage
 
-1. **Settings** - Paste your SerpAPI key, configure scheduled research
-2. **Products** - Import Excel, browse by category, use filter presets
+1. **Settings** - Paste your SerpAPI key, manage category tree, configure scheduled research
+2. **Products** - Import Excel, browse by category (hierarchical filter with counts), use filter presets
 3. **Research** - Select products, choose marketplace, run competition research
 4. **Product Detail** - Review competitors across 4 tabs, approve/reject products, add notes
 5. **Export** - Download enriched Excel or branded PDF report
@@ -148,10 +149,11 @@ verlumenMarketResearch/
 ├── public/images/            # Verlumen logos
 ├── src/
 │   ├── models/               # SQLAlchemy models (6 tables)
-│   ├── services/             # Business logic & ML (22 services)
+│   ├── services/             # Business logic & ML (23 services)
 │   │   ├── amazon_search     # SerpAPI wrapper (multi-marketplace)
 │   │   ├── match_scorer      # Semantic scoring (sentence-transformers)
 │   │   ├── trend_tracker     # Competitor trend comparison
+│   │   ├── category_helpers   # Hierarchical search context resolution
 │   │   ├── scheduler         # APScheduler background research
 │   │   ├── pdf_exporter      # Branded PDF report generation
 │   │   ├── excel_exporter    # 6-sheet Excel with charts
@@ -201,6 +203,16 @@ Excel import, SerpAPI search, competition scoring, product dashboard, export sys
 - Scheduled research with APScheduler (daily/weekly/monthly)
 - PDF report generation (branded Verlumen reports)
 - Docker deployment (Dockerfile + docker-compose + health check)
+
+### Phase 5.5: Hierarchical Categories
+- Self-referencing category tree (unlimited nesting, e.g. Toys & Games > Puzzles > 3D Puzzles)
+- Move/re-parent categories with full descendant-level fix
+- Per-category Amazon department with inheritance (children inherit from parent)
+- Subcategory search enhancement (leaf name appended to search queries)
+- Hierarchical filter dropdowns with product counts on Products & Export pages
+- Smart sidebar nav: only shows categories with products, clean indented tree
+- Pre-seeded Toys & Games tree with 20 Amazon subcategories + Baby Products
+- SQLite migration: safe table recreation for schema change, department mapping migration
 
 ## Roadmap: Phase 6 (Future)
 

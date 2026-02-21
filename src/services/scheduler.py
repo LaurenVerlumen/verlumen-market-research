@@ -7,7 +7,7 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config import SERPAPI_KEY, DATA_DIR, AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
+from config import SERPAPI_KEY, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,7 @@ def _run_scheduled_research():
     from src.models import get_session, Product, SearchSession, AmazonCompetitor
     from src.services import AmazonSearchService, CompetitionAnalyzer
     from src.services.match_scorer import score_matches
+    from src.services.category_helpers import get_search_context
 
     logger.info("Starting scheduled research run...")
 
@@ -100,11 +101,11 @@ def _run_scheduled_research():
                 continue
 
             try:
-                # Determine department
-                dept = AMAZON_DEPARTMENT_DEFAULT
-                if product.category:
-                    cat_lower = product.category.name.lower()
-                    dept = AMAZON_DEPARTMENT_MAP.get(cat_lower, AMAZON_DEPARTMENT_DEFAULT)
+                # Resolve department + query suffix from category hierarchy
+                ctx = get_search_context(product.category)
+                dept = ctx["department"]
+                if ctx["query_suffix"] and ctx["query_suffix"].lower() not in query.lower():
+                    query = f"{query} {ctx['query_suffix']}"
 
                 logger.info(f"Researching: {product.name} (query: {query})")
 

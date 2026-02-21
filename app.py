@@ -26,8 +26,12 @@ def index():
 
 
 @ui.page("/products")
-def products_view(category: str | None = None, search: str | None = None):
-    products_page(category=category, search=search)
+def products_view(
+    category: str | None = None,
+    category_id: int | None = None,
+    search: str | None = None,
+):
+    products_page(category=category, category_id=category_id, search=search)
 
 
 @ui.page("/products/{product_id}")

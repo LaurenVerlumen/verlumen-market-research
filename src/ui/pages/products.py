@@ -11,13 +11,14 @@ from sqlalchemy.orm import joinedload
 
 from config import (
     BASE_DIR, SERPAPI_KEY,
-    AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, SP_API_REFRESH_TOKEN,
+    SP_API_REFRESH_TOKEN,
     AMAZON_MARKETPLACES,
 )
 from src.models import get_session, init_db, Category, Product, AmazonCompetitor, SearchSession
 from src.services import (
     parse_alibaba_url, parse_excel, ImageFetcher, download_image,
     AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
+    get_search_context,
 )
 from src.services.match_scorer import score_matches
 from src.services.query_optimizer import optimize_query
@@ -33,23 +34,50 @@ logger = logging.getLogger(__name__)
 _DEFAULT_EXCEL = BASE_DIR / "verlumen-Product Research.xlsx"
 
 
-def products_page(category: str | None = None, search: str | None = None):
+def products_page(
+    category: str | None = None,
+    category_id: int | None = None,
+    search: str | None = None,
+):
     """Render the products browser page.
 
     Args:
-        category: Optional category name to pre-filter by (from URL query param).
+        category: Optional category name for backward compat (from URL query param).
+        category_id: Optional category ID to pre-filter by (from URL query param).
         search: Optional search term to pre-fill the search input (from URL query param).
     """
     content = build_layout()
 
+    # Resolve category name to ID for backward compat
+    _active_cat_id = category_id
+    _active_cat_path = None
+    if category and not _active_cat_id:
+        _resolve_db = get_session()
+        try:
+            _cat_obj = _resolve_db.query(Category).filter_by(name=category).first()
+            if _cat_obj:
+                _active_cat_id = _cat_obj.id
+        finally:
+            _resolve_db.close()
+
+    # Look up category path for header display
+    if _active_cat_id:
+        _path_db = get_session()
+        try:
+            _cat_obj = _path_db.query(Category).filter_by(id=_active_cat_id).first()
+            if _cat_obj:
+                _active_cat_path = _cat_obj.get_path()
+        finally:
+            _path_db.close()
+
     with content:
-        if category:
+        if _active_cat_path:
             with ui.row().classes("items-center gap-3"):
                 ui.button(
                     icon="arrow_back", on_click=lambda: ui.navigate.to("/products"),
                 ).props("flat round size=sm")
-                ui.label(category).classes("text-h5 font-bold")
-            ui.label(f"Products in {category}").classes(
+                ui.label(_active_cat_path).classes("text-h5 font-bold")
+            ui.label(f"Products in {_active_cat_path}").classes(
                 "text-body2 text-secondary mb-2"
             )
         else:
@@ -340,7 +368,11 @@ def products_page(category: str | None = None, search: str | None = None):
         # --- Products list ---
         session = get_session()
         try:
-            categories = session.query(Category).order_by(Category.name).all()
+            categories = (
+                session.query(Category)
+                .order_by(Category.sort_order, Category.name)
+                .all()
+            )
             if not categories:
                 ui.label(
                     "No products imported yet. Go to Import Data to get started."
@@ -358,19 +390,19 @@ def products_page(category: str | None = None, search: str | None = None):
             # --- Filter Presets ---
             _BUILTIN_PRESETS = {
                 "All Products": {
-                    "category": "All", "status": "All", "profit": "All",
+                    "category": "all", "status": "All", "profit": "All",
                     "comp_range": "All", "sort": "Name (A-Z)",
                 },
                 "High Opportunity": {
-                    "category": "All", "status": "Researched", "profit": "All",
+                    "category": "all", "status": "Researched", "profit": "All",
                     "comp_range": "All", "sort": "Best Opportunity",
                 },
                 "Needs Research": {
-                    "category": "All", "status": "Imported", "profit": "All",
+                    "category": "all", "status": "Imported", "profit": "All",
                     "comp_range": "All", "sort": "Newest first",
                 },
                 "Approved Winners": {
-                    "category": "All", "status": "Approved", "profit": "All",
+                    "category": "all", "status": "Approved", "profit": "All",
                     "comp_range": "All", "sort": "Best Opportunity",
                 },
             }
@@ -507,11 +539,38 @@ def products_page(category: str | None = None, search: str | None = None):
 
             # --- Filter row ---
             with ui.row().classes("w-full items-center gap-4 flex-wrap"):
-                cat_names = ["All"] + [c.name for c in categories]
-                _initial_cat = category if category in cat_names else "All"
+                # Build hierarchical category options with product counts
+                _total_products = session.query(Product).count()
+                _cat_options = {"all": f"All Categories ({_total_products})"}
+
+                # Product counts per category
+                _cat_prod_counts = dict(
+                    session.query(Product.category_id, func.count(Product.id))
+                    .group_by(Product.category_id)
+                    .all()
+                )
+
+                def _cat_total_count(cat):
+                    """Own + descendant product count."""
+                    total = _cat_prod_counts.get(cat.id, 0)
+                    for child in cat.children:
+                        total += _cat_total_count(child)
+                    return total
+
+                def _build_cat_options(cats, depth=0):
+                    for c in cats:
+                        indent = "\u00A0\u00A0\u00A0\u00A0" * depth
+                        count = _cat_total_count(c)
+                        _cat_options[str(c.id)] = f"{indent}{c.name} ({count})"
+                        _build_cat_options(c.children, depth + 1)
+
+                roots = [c for c in categories if c.parent_id is None]
+                _build_cat_options(roots)
+
+                _initial_cat = str(_active_cat_id) if _active_cat_id else "all"
                 filter_select = ui.select(
-                    cat_names, value=_initial_cat, label="Category",
-                ).props("outlined dense").classes("w-48")
+                    _cat_options, value=_initial_cat, label="Category",
+                ).props("outlined dense").classes("w-56")
 
                 status_select = ui.select(
                     ["All", "Imported", "Researched", "Under Review", "Approved", "Rejected"],
@@ -849,11 +908,11 @@ def products_page(category: str | None = None, search: str | None = None):
 
                         query = product.amazon_search_query or optimize_query(product.name) or product.name
 
-                        # Auto-detect Amazon department from category
-                        dept = AMAZON_DEPARTMENT_DEFAULT
-                        if product.category:
-                            cat_lower = product.category.name.lower()
-                            dept = AMAZON_DEPARTMENT_MAP.get(cat_lower, AMAZON_DEPARTMENT_DEFAULT)
+                        # Resolve department + query suffix from category hierarchy
+                        _ctx = get_search_context(product.category)
+                        dept = _ctx["department"]
+                        if _ctx["query_suffix"] and _ctx["query_suffix"].lower() not in query.lower():
+                            query = f"{query} {_ctx['query_suffix']}"
 
                         # Update current product display
                         current_thumb.clear()
@@ -1176,11 +1235,15 @@ def products_page(category: str | None = None, search: str | None = None):
                     joinedload(Product.search_sessions),
                 )
 
-                # Category filter
-                if filter_select.value != "All":
-                    cat = db.query(Category).filter_by(name=filter_select.value).first()
-                    if cat:
-                        query = query.filter(Product.category_id == cat.id)
+                # Category filter (hierarchical - includes descendant products)
+                if filter_select.value != "all":
+                    try:
+                        cat = db.query(Category).filter_by(id=int(filter_select.value)).first()
+                        if cat:
+                            all_ids = cat.get_all_ids()
+                            query = query.filter(Product.category_id.in_(all_ids))
+                    except (ValueError, TypeError):
+                        pass
 
                 # Profit data filter (at DB level)
                 if profit_filter.value == "Has Profit Data":

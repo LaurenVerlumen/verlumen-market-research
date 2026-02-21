@@ -3,14 +3,15 @@ import asyncio
 import os
 
 from nicegui import ui
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 import config
 from config import (
     BASE_DIR, SERPAPI_KEY,
     SP_API_REFRESH_TOKEN, SP_API_LWA_APP_ID, SP_API_LWA_CLIENT_SECRET,
     SP_API_AWS_ACCESS_KEY, SP_API_AWS_SECRET_KEY, SP_API_ROLE_ARN,
-    AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENTS,
-    save_department_map,
+    AMAZON_DEPARTMENTS, AMAZON_DEPARTMENT_DEFAULT,
 )
 from src.models import Category, Product, get_session
 from src.services import AmazonSearchService
@@ -280,148 +281,23 @@ def settings_page():
                 "Clear Expired Cache", icon="cleaning_services", on_click=clear_expired,
             ).props("flat color=grey").classes("mt-2")
 
-        # Amazon Department Mapping
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Amazon Department Mapping").classes("text-subtitle1 font-bold mb-2")
-            ui.label(
-                "Map your product categories to Amazon departments. "
-                "This filters search results to the correct department for better relevance."
-            ).classes("text-body2 text-secondary mb-3")
-
-            dept_container = ui.column().classes("w-full")
-
-            # Build inverted dept options for the dropdowns
-            dept_options = {v: k for k, v in AMAZON_DEPARTMENTS.items()}
-
-            def _refresh_dept_mapping():
-                dept_container.clear()
-                session_d = get_session()
-                try:
-                    categories = session_d.query(Category).order_by(Category.name).all()
-                    with dept_container:
-                        if not categories:
-                            ui.label("No categories found. Import products first.").classes(
-                                "text-body2 text-secondary"
-                            )
-                            return
-
-                        ui.label(
-                            f"Default department: {AMAZON_DEPARTMENTS.get(AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENT_DEFAULT)}"
-                        ).classes("text-caption text-secondary mb-2")
-
-                        for cat in categories:
-                            cat_lower = cat.name.lower()
-                            current_dept = AMAZON_DEPARTMENT_MAP.get(
-                                cat_lower, AMAZON_DEPARTMENT_DEFAULT
-                            )
-                            current_label = AMAZON_DEPARTMENTS.get(current_dept, current_dept)
-
-                            with ui.row().classes("items-center gap-3 w-full py-1"):
-                                ui.label(cat.name).classes("text-body2 font-medium").style(
-                                    "min-width:200px"
-                                )
-                                ui.icon("arrow_forward").classes("text-grey-5")
-
-                                def _make_handler(cname):
-                                    def _on_change(e):
-                                        new_dept = dept_options.get(e.value, e.value)
-                                        AMAZON_DEPARTMENT_MAP[cname.lower()] = new_dept
-                                        save_department_map(AMAZON_DEPARTMENT_MAP)
-                                        ui.notify(
-                                            f"Mapped '{cname}' -> {e.value}",
-                                            type="positive",
-                                        )
-                                    return _on_change
-
-                                dept_select = ui.select(
-                                    options=list(AMAZON_DEPARTMENTS.values()),
-                                    value=current_label,
-                                    on_change=_make_handler(cat.name),
-                                ).props("outlined dense").classes("w-48")
-                finally:
-                    session_d.close()
-
-            _refresh_dept_mapping()
-
-        # Category Management
+        # Category Management (hierarchical tree)
         with ui.card().classes("w-full p-4 mb-4"):
             ui.label("Category Management").classes("text-subtitle1 font-bold mb-2")
             ui.label(
-                "Manage product categories. Rename categories to fix typos, "
-                "or delete unused ones."
+                "Manage product categories as a hierarchy. "
+                "Each category can have subcategories and its own Amazon department."
             ).classes("text-body2 text-secondary mb-3")
 
-            category_container = ui.column().classes("w-full")
+            category_tree_container = ui.column().classes("w-full")
 
             def refresh_categories():
-                """Reload the category list from the database and update sidebar nav."""
+                """Reload the category tree from the database and update sidebar nav."""
                 from src.ui.layout import refresh_nav_categories
                 refresh_nav_categories()
-                _refresh_dept_mapping()
-                category_container.clear()
-                session = get_session()
-                try:
-                    categories = session.query(Category).order_by(Category.name).all()
-                    with category_container:
-                        if not categories:
-                            ui.label("No categories found.").classes(
-                                "text-body2 text-secondary"
-                            )
-                        for cat in categories:
-                            product_count = (
-                                session.query(Product)
-                                .filter_by(category_id=cat.id)
-                                .count()
-                            )
-                            _build_category_row(
-                                cat.id, cat.name, product_count, refresh_categories
-                            )
+                _render_category_tree(category_tree_container)
 
-                        # Add new category section
-                        with ui.row().classes("items-center gap-2 mt-3 w-full"):
-                            new_cat_input = ui.input(
-                                label="New category name",
-                                placeholder="Enter category name",
-                            ).classes("flex-grow")
-
-                            def add_category(inp=new_cat_input):
-                                name = inp.value.strip()
-                                if not name:
-                                    ui.notify(
-                                        "Category name cannot be empty.",
-                                        type="warning",
-                                    )
-                                    return
-                                sess = get_session()
-                                try:
-                                    existing = (
-                                        sess.query(Category)
-                                        .filter_by(name=name)
-                                        .first()
-                                    )
-                                    if existing:
-                                        ui.notify(
-                                            f"Category '{name}' already exists.",
-                                            type="warning",
-                                        )
-                                        return
-                                    sess.add(Category(name=name))
-                                    sess.commit()
-                                    ui.notify(
-                                        f"Category '{name}' added.",
-                                        type="positive",
-                                    )
-                                    refresh_categories()
-                                finally:
-                                    sess.close()
-
-                            ui.button("Add", icon="add", on_click=add_category).props(
-                                "color=primary"
-                            )
-                finally:
-                    session.close()
-
-            refresh_categories()
+            _render_category_tree(category_tree_container, on_refresh=refresh_categories)
 
         # Scheduled Research
         with ui.card().classes("w-full p-4 mb-4"):
@@ -549,6 +425,407 @@ def settings_page():
             ).classes("text-body2 text-secondary")
 
 
+def _render_category_tree(container, on_refresh=None):
+    """Render the full category tree inside the given container."""
+    container.clear()
+    db = get_session()
+    try:
+        # Load root categories with eager-loaded children
+        roots = (
+            db.query(Category)
+            .filter(Category.parent_id.is_(None))
+            .order_by(Category.sort_order, Category.name)
+            .all()
+        )
+
+        # Batch product counts: {category_id: count}
+        prod_counts = dict(
+            db.query(Product.category_id, func.count(Product.id))
+            .group_by(Product.category_id)
+            .all()
+        )
+
+        # We need to eagerly load the full tree. Use a recursive load.
+        def _load_tree(cats):
+            """Ensure all children are loaded while session is open."""
+            for cat in cats:
+                _ = cat.children  # trigger lazy load
+                _load_tree(cat.children)
+
+        _load_tree(roots)
+
+        # Detach from session for rendering
+        cat_data = _serialize_tree(roots, prod_counts)
+
+    finally:
+        db.close()
+
+    if on_refresh is None:
+        # Create a self-referencing refresh
+        def on_refresh():
+            _render_category_tree(container)
+
+    with container:
+        if not cat_data:
+            ui.label("No categories found. They will be created when you import products.").classes(
+                "text-body2 text-secondary"
+            )
+
+        for node in cat_data:
+            _render_category_node(node, 0, on_refresh)
+
+        # Add root category
+        with ui.row().classes("items-center gap-2 mt-4 w-full"):
+            new_root_input = ui.input(
+                label="New root category",
+                placeholder="e.g. Home & Kitchen",
+            ).classes("flex-grow")
+
+            def _add_root(inp=new_root_input):
+                name = inp.value.strip()
+                if not name:
+                    ui.notify("Name cannot be empty.", type="warning")
+                    return
+                sess = get_session()
+                try:
+                    existing = sess.query(Category).filter_by(
+                        name=name, parent_id=None
+                    ).first()
+                    if existing:
+                        ui.notify(f"Root category '{name}' already exists.", type="warning")
+                        return
+                    sess.add(Category(name=name, level=0))
+                    sess.commit()
+                    ui.notify(f"Root category '{name}' added.", type="positive")
+                    on_refresh()
+                finally:
+                    sess.close()
+
+            ui.button("Add Root", icon="add", on_click=_add_root).props("color=primary")
+
+
+def _serialize_tree(cats, prod_counts):
+    """Convert Category ORM objects to plain dicts for rendering after session close."""
+    result = []
+    for cat in cats:
+        own_count = prod_counts.get(cat.id, 0)
+        children_data = _serialize_tree(cat.children, prod_counts)
+        total_count = own_count + sum(c["total_count"] for c in children_data)
+        result.append({
+            "id": cat.id,
+            "name": cat.name,
+            "level": cat.level,
+            "amazon_department": cat.amazon_department,
+            "own_count": own_count,
+            "total_count": total_count,
+            "children": children_data,
+        })
+    return result
+
+
+def _render_category_node(node, depth, on_refresh):
+    """Render a single category node in the tree with actions."""
+    indent = depth * 24
+
+    with ui.row().classes("items-center gap-2 w-full py-1").style(
+        f"padding-left: {indent}px"
+    ):
+        # Icon
+        if node["children"]:
+            ui.icon("folder", size="sm").classes("text-accent")
+        else:
+            ui.icon("label", size="sm").classes("text-grey-6")
+
+        # Name
+        ui.label(node["name"]).classes("text-body2 font-medium flex-1")
+
+        # Product count badge
+        if node["total_count"] > 0:
+            count_text = str(node["own_count"])
+            if node["children"] and node["total_count"] != node["own_count"]:
+                count_text = f"{node['own_count']}/{node['total_count']}"
+            ui.badge(count_text, color="grey-4").props("rounded dense").classes(
+                "text-grey-8"
+            ).tooltip(
+                f"{node['own_count']} own, {node['total_count']} total with subcategories"
+            )
+
+        # Department dropdown
+        dept_options = {"": "(inherit)"}
+        dept_options.update({k: v for k, v in AMAZON_DEPARTMENTS.items()})
+        current_dept = node["amazon_department"] or ""
+
+        def _make_dept_handler(cat_id):
+            def _on_dept_change(e):
+                sess = get_session()
+                try:
+                    cat = sess.query(Category).filter_by(id=cat_id).first()
+                    if cat:
+                        cat.amazon_department = e.value if e.value else None
+                        sess.commit()
+                        resolved = cat.resolve_department()
+                        ui.notify(
+                            f"Department: {AMAZON_DEPARTMENTS.get(resolved, resolved)}",
+                            type="positive",
+                        )
+                finally:
+                    sess.close()
+            return _on_dept_change
+
+        dept_sel = ui.select(
+            options=dept_options,
+            value=current_dept,
+            on_change=_make_dept_handler(node["id"]),
+        ).props("outlined dense").classes("w-44").tooltip(
+            f"Resolved: {AMAZON_DEPARTMENTS.get(node['amazon_department'] or AMAZON_DEPARTMENT_DEFAULT, AMAZON_DEPARTMENT_DEFAULT)}"
+        )
+
+        # Add child button
+        def _make_add_child(parent_id, parent_name, parent_level):
+            def _add_child():
+                with ui.dialog() as dlg, ui.card().classes("w-80"):
+                    ui.label(f"Add subcategory under '{parent_name}'").classes(
+                        "text-subtitle2 font-bold"
+                    )
+                    child_input = ui.input(
+                        label="Subcategory name",
+                        placeholder="e.g. 3D Puzzles",
+                    ).classes("w-full")
+
+                    def _do_add():
+                        name = child_input.value.strip()
+                        if not name:
+                            ui.notify("Name cannot be empty.", type="warning")
+                            return
+                        sess = get_session()
+                        try:
+                            existing = sess.query(Category).filter_by(
+                                name=name, parent_id=parent_id
+                            ).first()
+                            if existing:
+                                ui.notify(f"'{name}' already exists under '{parent_name}'.", type="warning")
+                                return
+                            sess.add(Category(
+                                name=name,
+                                parent_id=parent_id,
+                                level=parent_level + 1,
+                            ))
+                            sess.commit()
+                            dlg.close()
+                            ui.notify(f"Added '{name}' under '{parent_name}'.", type="positive")
+                            on_refresh()
+                        finally:
+                            sess.close()
+
+                    with ui.row().classes("justify-end gap-2 mt-3"):
+                        ui.button("Cancel", on_click=dlg.close).props("flat")
+                        ui.button("Add", icon="add", on_click=_do_add).props("color=primary")
+                dlg.open()
+            return _add_child
+
+        ui.button(
+            icon="add",
+            on_click=_make_add_child(node["id"], node["name"], node["level"]),
+        ).props("flat dense round color=primary size=sm").tooltip("Add subcategory")
+
+        # Rename button
+        def _make_rename(cat_id, cat_name):
+            def _rename():
+                with ui.dialog() as dlg, ui.card().classes("w-80"):
+                    ui.label("Rename Category").classes("text-subtitle2 font-bold")
+                    rename_input = ui.input(label="New name", value=cat_name).classes("w-full")
+
+                    def _do_rename():
+                        new_name = rename_input.value.strip()
+                        if not new_name:
+                            ui.notify("Name cannot be empty.", type="warning")
+                            return
+                        if new_name == cat_name:
+                            dlg.close()
+                            return
+                        sess = get_session()
+                        try:
+                            cat = sess.query(Category).filter_by(id=cat_id).first()
+                            if cat:
+                                # Check sibling uniqueness
+                                dup = sess.query(Category).filter(
+                                    Category.name == new_name,
+                                    Category.parent_id == cat.parent_id,
+                                    Category.id != cat_id,
+                                ).first()
+                                if dup:
+                                    ui.notify(f"'{new_name}' already exists at this level.", type="warning")
+                                    return
+                                cat.name = new_name
+                                sess.commit()
+                                dlg.close()
+                                ui.notify(f"Renamed to '{new_name}'.", type="positive")
+                                on_refresh()
+                        finally:
+                            sess.close()
+
+                    with ui.row().classes("justify-end gap-2 mt-3"):
+                        ui.button("Cancel", on_click=dlg.close).props("flat")
+                        ui.button("Rename", icon="edit", on_click=_do_rename).props("color=primary")
+                dlg.open()
+            return _rename
+
+        ui.button(
+            icon="edit",
+            on_click=_make_rename(node["id"], node["name"]),
+        ).props("flat dense round color=grey size=sm").tooltip("Rename")
+
+        # Move / re-parent button
+        def _make_move(cat_id, cat_name, cat_level):
+            def _move():
+                # Build list of valid parent options (excluding self and descendants)
+                sess = get_session()
+                try:
+                    cat = sess.query(Category).filter_by(id=cat_id).first()
+                    if not cat:
+                        return
+                    excluded_ids = set(cat.get_all_ids())
+
+                    all_cats = (
+                        sess.query(Category)
+                        .order_by(Category.sort_order, Category.name)
+                        .all()
+                    )
+                    roots = [c for c in all_cats if c.parent_id is None]
+
+                    move_options = {"root": "(Root level)"}
+
+                    def _build_move_options(cats, depth=0):
+                        for c in cats:
+                            if c.id not in excluded_ids:
+                                indent = "\u00A0\u00A0\u00A0\u00A0" * depth
+                                move_options[str(c.id)] = f"{indent}{c.name}"
+                            _build_move_options(
+                                [ch for ch in c.children if ch.id not in excluded_ids],
+                                depth + 1,
+                            )
+
+                    _build_move_options(roots)
+
+                    # Current parent
+                    current_val = str(cat.parent_id) if cat.parent_id else "root"
+                finally:
+                    sess.close()
+
+                with ui.dialog() as dlg, ui.card().classes("w-96"):
+                    ui.label(f"Move '{cat_name}'").classes("text-subtitle2 font-bold")
+                    ui.label("Select a new parent category:").classes(
+                        "text-body2 text-secondary"
+                    )
+                    parent_select = ui.select(
+                        options=move_options,
+                        value=current_val,
+                        label="New parent",
+                    ).props("outlined dense").classes("w-full")
+
+                    def _do_move():
+                        new_parent = parent_select.value
+                        sess = get_session()
+                        try:
+                            cat = sess.query(Category).filter_by(id=cat_id).first()
+                            if not cat:
+                                return
+                            if new_parent == "root":
+                                cat.parent_id = None
+                                cat.level = 0
+                            else:
+                                new_pid = int(new_parent)
+                                parent_cat = sess.query(Category).filter_by(id=new_pid).first()
+                                if not parent_cat:
+                                    return
+                                cat.parent_id = new_pid
+                                cat.level = parent_cat.level + 1
+
+                            # Fix levels for all descendants
+                            def _fix_levels(c, lvl):
+                                c.level = lvl
+                                for child in c.children:
+                                    _fix_levels(child, lvl + 1)
+
+                            _fix_levels(cat, cat.level)
+                            sess.commit()
+                            dlg.close()
+                            new_parent_name = "(Root)" if new_parent == "root" else move_options.get(new_parent, "")
+                            ui.notify(
+                                f"Moved '{cat_name}' under {new_parent_name}.",
+                                type="positive",
+                            )
+                            on_refresh()
+                        finally:
+                            sess.close()
+
+                    with ui.row().classes("justify-end gap-2 mt-3"):
+                        ui.button("Cancel", on_click=dlg.close).props("flat")
+                        ui.button("Move", icon="drive_file_move", on_click=_do_move).props(
+                            "color=primary"
+                        )
+                dlg.open()
+            return _move
+
+        ui.button(
+            icon="drive_file_move",
+            on_click=_make_move(node["id"], node["name"], node["level"]),
+        ).props("flat dense round color=grey size=sm").tooltip("Move to another parent")
+
+        # Delete button
+        def _make_delete(cat_id, cat_name, has_products, has_children):
+            def _delete():
+                if has_products:
+                    ui.notify(
+                        f"Cannot delete '{cat_name}' - it has products assigned.",
+                        type="warning",
+                    )
+                    return
+
+                msg = f"Delete '{cat_name}'?"
+                if has_children:
+                    msg += " This will also delete all subcategories."
+
+                with ui.dialog() as dlg, ui.card():
+                    ui.label(msg).classes("text-subtitle2 font-bold")
+                    with ui.row().classes("justify-end gap-2 mt-3"):
+                        ui.button("Cancel", on_click=dlg.close).props("flat")
+
+                        def _do_delete():
+                            sess = get_session()
+                            try:
+                                cat = sess.query(Category).filter_by(id=cat_id).first()
+                                if cat:
+                                    sess.delete(cat)
+                                    sess.commit()
+                                    dlg.close()
+                                    ui.notify(f"Deleted '{cat_name}'.", type="positive")
+                                    on_refresh()
+                            finally:
+                                sess.close()
+
+                        ui.button("Delete", on_click=_do_delete).props("color=negative")
+                dlg.open()
+            return _delete
+
+        has_products = node["total_count"] > 0
+        del_btn = ui.button(
+            icon="delete",
+            on_click=_make_delete(
+                node["id"], node["name"], has_products, bool(node["children"])
+            ),
+        ).props(
+            f"flat dense round size=sm color={'grey' if has_products else 'negative'}"
+            + (" disable" if has_products else "")
+        )
+        if has_products:
+            del_btn.tooltip(f"Has {node['total_count']} product(s) - cannot delete")
+
+    # Render children recursively
+    for child in node["children"]:
+        _render_category_node(child, depth + 1, on_refresh)
+
+
 def _mask_key(key: str) -> str:
     if len(key) <= 8:
         return "*" * len(key)
@@ -574,110 +851,3 @@ def _update_env_file(key: str, value: str):
         new_lines.append(f"{key}={value}")
 
     ENV_FILE.write_text("\n".join(new_lines) + "\n")
-
-
-def _build_category_row(cat_id: int, cat_name: str, product_count: int, on_refresh):
-    """Build a single category row with rename and delete controls."""
-    row = ui.row().classes("items-center gap-2 w-full py-1")
-
-    with row:
-        # Display mode: name label + product count + action buttons
-        name_label = ui.label(cat_name).classes("text-body1 flex-grow")
-        count_badge = ui.label(
-            f"{product_count} product{'s' if product_count != 1 else ''}"
-        ).classes("text-body2 text-secondary")
-
-        # Edit (rename) mode elements - hidden initially
-        edit_input = ui.input(value=cat_name).classes("flex-grow")
-        edit_input.visible = False
-
-        def start_edit():
-            name_label.visible = False
-            count_badge.visible = False
-            edit_btn.visible = False
-            delete_btn.visible = False
-            edit_input.visible = True
-            edit_input.value = name_label.text
-
-        def finish_edit():
-            new_name = edit_input.value.strip()
-            if not new_name:
-                ui.notify("Category name cannot be empty.", type="warning")
-                return
-            if new_name == cat_name:
-                # No change, just restore display mode
-                _restore_display()
-                return
-            session = get_session()
-            try:
-                duplicate = (
-                    session.query(Category)
-                    .filter(Category.name == new_name, Category.id != cat_id)
-                    .first()
-                )
-                if duplicate:
-                    ui.notify(
-                        f"Category '{new_name}' already exists.", type="warning"
-                    )
-                    return
-                cat = session.query(Category).filter_by(id=cat_id).first()
-                if cat:
-                    cat.name = new_name
-                    session.commit()
-                    ui.notify(f"Renamed to '{new_name}'.", type="positive")
-                    on_refresh()
-            finally:
-                session.close()
-
-        def _restore_display():
-            name_label.visible = True
-            count_badge.visible = True
-            edit_btn.visible = True
-            delete_btn.visible = True
-            edit_input.visible = False
-
-        edit_input.on("keydown.enter", lambda: finish_edit())
-        edit_input.on("blur", lambda: finish_edit())
-
-        edit_btn = ui.button(icon="edit", on_click=start_edit).props(
-            "flat dense color=grey"
-        )
-
-        def delete_category():
-            session = get_session()
-            try:
-                cat = session.query(Category).filter_by(id=cat_id).first()
-                if cat:
-                    session.delete(cat)
-                    session.commit()
-                    ui.notify(f"Category '{cat_name}' deleted.", type="positive")
-                    on_refresh()
-            finally:
-                session.close()
-
-        if product_count == 0:
-            def _confirm_delete():
-                with ui.dialog() as dlg, ui.card():
-                    ui.label(f"Delete '{cat_name}'?").classes("text-subtitle2 font-bold")
-                    ui.label("This category has no products and can be safely removed.").classes(
-                        "text-body2 text-secondary"
-                    )
-                    with ui.row().classes("justify-end gap-2 mt-3"):
-                        ui.button("Cancel", on_click=dlg.close).props("flat")
-                        def _do_delete():
-                            delete_category()
-                            dlg.close()
-                        ui.button("Delete", on_click=_do_delete).props("color=negative")
-                dlg.open()
-
-            delete_btn = ui.button(
-                icon="delete", on_click=_confirm_delete,
-            ).props("flat dense color=negative")
-        else:
-            delete_btn = ui.button(icon="delete").props(
-                "flat dense color=grey disable"
-            )
-            delete_btn.tooltip(
-                f"Has {product_count} product{'s' if product_count != 1 else ''}"
-                " - cannot delete"
-            )

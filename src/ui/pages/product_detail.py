@@ -10,10 +10,10 @@ from nicegui import ui
 from config import SERPAPI_KEY, SP_API_REFRESH_TOKEN, AMAZON_MARKETPLACES
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
 from src.models.category import Category
-from config import AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT
 from src.services import (
     ImageFetcher, download_image, save_uploaded_image,
     AmazonSearchService, AmazonSearchError, CompetitionAnalyzer,
+    get_search_context,
 )
 from src.services.sp_api_client import SPAPIClient
 from src.services.xray_importer import XrayImporter
@@ -157,11 +157,10 @@ def product_detail_page(product_id: int):
                     on_click=lambda: _set_status("under_review"),
                 ).props("color=warning size=sm outline")
 
-            # --- Eagerly resolve department while session is still open ---
-            _product_dept = AMAZON_DEPARTMENT_DEFAULT
-            if product.category:
-                _cat_lower = product.category.name.lower()
-                _product_dept = AMAZON_DEPARTMENT_MAP.get(_cat_lower, AMAZON_DEPARTMENT_DEFAULT)
+            # --- Eagerly resolve department + query suffix while session is still open ---
+            _search_ctx = get_search_context(product.category)
+            _product_dept = _search_ctx["department"]
+            _query_suffix = _search_ctx["query_suffix"]
             _product_name = product.name  # cache for use after session close
 
             # --- Lookup latest session & all sessions for tabs ---
@@ -212,7 +211,7 @@ def product_detail_page(product_id: int):
                 with ui.tab_panel(competitors_tab):
                     _render_competitors_tab(
                         product, product_id, session, latest_session,
-                        _product_dept, _product_name,
+                        _product_dept, _product_name, _query_suffix,
                     )
 
                 # ============================================================
@@ -581,7 +580,7 @@ def _render_overview_tab(product, product_id, session,
 
 
 def _render_competitors_tab(product, product_id, session, latest_session,
-                            _product_dept, _product_name):
+                            _product_dept, _product_name, _query_suffix=""):
     """Render the Competitors tab: research controls, stats, competitor table."""
 
     # We need search_query_input accessible by _rerun_research.
@@ -597,6 +596,9 @@ def _render_competitors_tab(product, product_id, session, latest_session,
         rerun_btn.disable()
 
         query = _query_holder["value"]
+        # Append subcategory suffix if not already present in query
+        if _query_suffix and _query_suffix.lower() not in query.lower():
+            query = f"{query} {_query_suffix}"
         dept = _product_dept
         dept_label = f" [dept: {dept}]" if dept else ""
 

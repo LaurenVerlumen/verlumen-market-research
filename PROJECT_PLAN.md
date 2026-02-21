@@ -6,7 +6,7 @@
 
 **5-page app**: Dashboard, Products, Product Detail (4 tabs), Export, Settings
 
-**22 services**: Amazon search (multi-marketplace), competition analysis, semantic ML scoring, trend tracking, profit calculation, Xray import, scheduled research, PDF export, Excel export with charts, fee calculator (2025-Q4)
+**23 services**: Amazon search (multi-marketplace), competition analysis, semantic ML scoring, trend tracking, profit calculation, Xray import, scheduled research, PDF export, Excel export with charts, fee calculator (2025-Q4), category hierarchy helpers
 
 **ML stack**: sentence-transformers semantic scorer, TF-IDF query optimizer, K-means price recommender, demand estimator, VVS viability scorer
 
@@ -17,8 +17,8 @@
 ### Scores by Area
 | Area | Score | Notes |
 |------|-------|-------|
-| Feature completeness | 9/10 | Core + temporal + scheduling + multi-market |
-| UI/UX | 9/10 | Tabbed detail, global search, filter presets, trend charts |
+| Feature completeness | 9/10 | Core + temporal + scheduling + multi-market + hierarchical categories |
+| UI/UX | 9/10 | Tabbed detail, global search, filter presets, trend charts, category tree |
 | ML/Intelligence | 8/10 | Semantic scoring, VVS, K-means pricing, demand estimation |
 | Code quality | 7/10 | Clean architecture, some large files remain |
 | Testing | 0/10 | Zero tests |
@@ -74,6 +74,31 @@ Branded Verlumen PDF using fpdf2. Cover page with KPI table, product summary tab
 
 ### 5.7 - Docker Deployment (DONE)
 Dockerfile (python:3.11-slim), docker-compose.yml with volumes and env vars, .dockerignore, `/_health` endpoint, configurable APP_HOST.
+
+---
+
+## Completed: Phase 5.5 - Hierarchical Categories
+
+### Category Tree Model (DONE)
+Self-referencing `Category` model with `parent_id`, `level`, `sort_order`, `amazon_department`. Sibling uniqueness via `UniqueConstraint("parent_id", "name")`. Helper methods: `get_ancestors()`, `get_path()`, `get_descendants()`, `get_all_ids()`, `resolve_department()`.
+
+### Database Migration (DONE)
+Safe SQLite migration (recreate table to drop UNIQUE constraint). Copies existing categories as root-level. Migrates department mappings from config into `amazon_department` column. Seeds Toys & Games tree with 20 Amazon subcategories + Baby Products root.
+
+### Search Enhancement (DONE)
+New `category_helpers.get_search_context()` returns department (inherited up tree) and query suffix (leaf category name stripped of special chars). Applied to all 4 search call sites: product detail, bulk research, scheduled research. Example: product in "Puzzles" searches as "Wooden Blocks Puzzles".
+
+### Settings Tree UI (DONE)
+Recursive tree management replacing flat category list + department mapping. Per-node: icon, name, count badge, department dropdown with "(inherit)" option, add subcategory, rename, move/re-parent, delete (cascade-aware). Department inheritance shown via tooltip.
+
+### Move/Re-parent (DONE)
+Dialog with hierarchical parent dropdown. Prevents circular moves (excludes self and descendants). Fixes descendant levels recursively after move.
+
+### Sidebar Navigation (DONE)
+Only shows categories with products (total_count > 0). Clean indented tree, no expansion panels. Links use `category_id` query param.
+
+### Hierarchical Filters (DONE)
+Products and Export pages: indented dropdown with product counts per category. Selecting a parent includes all descendant products. Backward-compatible with `?category=Name` URLs.
 
 ---
 
@@ -142,7 +167,7 @@ Dockerfile (python:3.11-slim), docker-compose.yml with volumes and env vars, .do
 └────────────────────────┬─────────────────────────────┘
                          │
 ┌────────────────────────▼─────────────────────────────┐
-│              Service Layer (22 services)              │
+│              Service Layer (23 services)              │
 │                                                       │
 │  Search*     SP-API    Xray      TrendTracker         │
 │  Analyzer    Scorer*   Price     Demand    VVS        │
@@ -158,7 +183,7 @@ Dockerfile (python:3.11-slim), docker-compose.yml with volumes and env vars, .do
 │  Product (+ decision_log, status)                     │
 │  AmazonCompetitor (19+ columns, trend support)        │
 │  SearchSession (+ amazon_domain for marketplace)      │
-│  Category   SearchCache                               │
+│  Category (hierarchical tree)   SearchCache             │
 └──────────────────────────────────────────────────────┘
 
 Deployment: Docker (Dockerfile + docker-compose.yml)
