@@ -1,5 +1,6 @@
 """Products page -- browse and manage imported products."""
 import asyncio
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from sqlalchemy.orm import joinedload
 from config import (
     BASE_DIR, SERPAPI_KEY,
     AMAZON_DEPARTMENT_MAP, AMAZON_DEPARTMENT_DEFAULT, SP_API_REFRESH_TOKEN,
+    AMAZON_MARKETPLACES,
 )
 from src.models import get_session, init_db, Category, Product, AmazonCompetitor, SearchSession
 from src.services import (
@@ -31,15 +33,30 @@ logger = logging.getLogger(__name__)
 _DEFAULT_EXCEL = BASE_DIR / "verlumen-Product Research.xlsx"
 
 
-def products_page():
-    """Render the products browser page."""
+def products_page(category: str | None = None, search: str | None = None):
+    """Render the products browser page.
+
+    Args:
+        category: Optional category name to pre-filter by (from URL query param).
+        search: Optional search term to pre-fill the search input (from URL query param).
+    """
     content = build_layout()
 
     with content:
-        ui.label("Products").classes("text-h5 font-bold")
-        ui.label("Browse and manage your products.").classes(
-            "text-body2 text-secondary mb-2"
-        )
+        if category:
+            with ui.row().classes("items-center gap-3"):
+                ui.button(
+                    icon="arrow_back", on_click=lambda: ui.navigate.to("/products"),
+                ).props("flat round size=sm")
+                ui.label(category).classes("text-h5 font-bold")
+            ui.label(f"Products in {category}").classes(
+                "text-body2 text-secondary mb-2"
+            )
+        else:
+            ui.label("Products").classes("text-h5 font-bold")
+            ui.label("Browse and manage your products.").classes(
+                "text-body2 text-secondary mb-2"
+            )
 
         # ===================================================================
         # Import from Excel section (merged from import_page.py)
@@ -334,14 +351,166 @@ def products_page():
             search_input = ui.input(
                 label="Search products",
                 placeholder="Type to filter by name...",
+                value=search or "",
             ).props('clearable outlined dense').classes("w-full")
             search_input.props('prepend-inner-icon="search"')
+
+            # --- Filter Presets ---
+            _BUILTIN_PRESETS = {
+                "All Products": {
+                    "category": "All", "status": "All", "profit": "All",
+                    "comp_range": "All", "sort": "Name (A-Z)",
+                },
+                "High Opportunity": {
+                    "category": "All", "status": "Researched", "profit": "All",
+                    "comp_range": "All", "sort": "Best Opportunity",
+                },
+                "Needs Research": {
+                    "category": "All", "status": "Imported", "profit": "All",
+                    "comp_range": "All", "sort": "Newest first",
+                },
+                "Approved Winners": {
+                    "category": "All", "status": "Approved", "profit": "All",
+                    "comp_range": "All", "sort": "Best Opportunity",
+                },
+            }
+            _BUILTIN_NAMES = list(_BUILTIN_PRESETS.keys())
+
+            # State to track user presets loaded from localStorage
+            _user_presets: dict[str, dict] = {}
+            # Flag to suppress preset clearing when we programmatically set filters
+            _applying_preset = {"active": False}
+
+            def _all_preset_options():
+                opts = list(_BUILTIN_NAMES)
+                for name in _user_presets:
+                    opts.append(name)
+                return opts
+
+            with ui.row().classes("w-full items-center gap-3"):
+                preset_select = ui.select(
+                    options=_all_preset_options(),
+                    value=None,
+                    label="Preset",
+                    clearable=True,
+                ).props("outlined dense").classes("w-56")
+
+                def _save_preset_dialog():
+                    with ui.dialog() as dlg, ui.card().classes("w-80"):
+                        ui.label("Save Filter Preset").classes("text-subtitle1 font-bold")
+                        preset_name_input = ui.input(
+                            label="Preset name",
+                            placeholder="My custom filter...",
+                        ).classes("w-full")
+
+                        async def _do_save():
+                            name = (preset_name_input.value or "").strip()
+                            if not name:
+                                ui.notify("Please enter a name.", type="warning")
+                                return
+                            if name in _BUILTIN_NAMES:
+                                ui.notify("Cannot overwrite a built-in preset.", type="negative")
+                                return
+                            filters = {
+                                "category": filter_select.value,
+                                "status": status_select.value,
+                                "profit": profit_filter.value,
+                                "comp_range": comp_range_filter.value,
+                                "sort": sort_select.value,
+                            }
+                            _user_presets[name] = filters
+                            # Persist to localStorage
+                            presets_list = [
+                                {"name": n, "filters": f} for n, f in _user_presets.items()
+                            ]
+                            await ui.run_javascript(
+                                f'localStorage.setItem("verlumen_filter_presets", {json.dumps(json.dumps(presets_list))})'
+                            )
+                            preset_select.options = _all_preset_options()
+                            preset_select.update()
+                            preset_select.value = name
+                            dlg.close()
+                            ui.notify(f'Preset "{name}" saved.', type="positive")
+
+                        with ui.row().classes("justify-end gap-2 mt-3"):
+                            ui.button("Cancel", on_click=dlg.close).props("flat")
+                            ui.button("Save", icon="save", on_click=_do_save).props("color=primary")
+                    dlg.open()
+
+                ui.button(icon="bookmark_add", on_click=_save_preset_dialog).props(
+                    "flat dense round"
+                ).tooltip("Save current filters as preset")
+
+                preset_delete_btn = ui.button(icon="delete").props(
+                    "flat dense round color=negative"
+                ).tooltip("Delete selected preset")
+                preset_delete_btn.set_visibility(False)
+
+                async def _delete_selected_preset():
+                    name = preset_select.value
+                    if not name or name in _BUILTIN_NAMES:
+                        return
+                    _user_presets.pop(name, None)
+                    presets_list = [
+                        {"name": n, "filters": f} for n, f in _user_presets.items()
+                    ]
+                    await ui.run_javascript(
+                        f'localStorage.setItem("verlumen_filter_presets", {json.dumps(json.dumps(presets_list))})'
+                    )
+                    preset_select.value = None
+                    preset_select.options = _all_preset_options()
+                    preset_select.update()
+                    preset_delete_btn.set_visibility(False)
+                    ui.notify(f'Preset "{name}" deleted.', type="info")
+
+                preset_delete_btn.on_click(_delete_selected_preset)
+
+            def _apply_preset(e):
+                name = preset_select.value
+                if not name:
+                    preset_delete_btn.set_visibility(False)
+                    return
+                # Show delete button only for user presets
+                preset_delete_btn.set_visibility(name not in _BUILTIN_NAMES)
+                # Get filter values
+                filters = _BUILTIN_PRESETS.get(name) or _user_presets.get(name)
+                if not filters:
+                    return
+                _applying_preset["active"] = True
+                filter_select.value = filters.get("category", "All")
+                status_select.value = filters.get("status", "All")
+                profit_filter.value = filters.get("profit", "All")
+                comp_range_filter.value = filters.get("comp_range", "All")
+                sort_select.value = filters.get("sort", "Name (A-Z)")
+                _applying_preset["active"] = False
+                _page_state["current"] = 1
+                refresh_products()
+
+            preset_select.on_value_change(_apply_preset)
+
+            async def _load_user_presets():
+                """Load saved user presets from localStorage on page load."""
+                try:
+                    raw = await ui.run_javascript(
+                        'localStorage.getItem("verlumen_filter_presets")'
+                    )
+                    if raw:
+                        presets_list = json.loads(raw)
+                        for item in presets_list:
+                            _user_presets[item["name"]] = item["filters"]
+                        preset_select.options = _all_preset_options()
+                        preset_select.update()
+                except Exception:
+                    pass
+
+            ui.timer(0.1, _load_user_presets, once=True)
 
             # --- Filter row ---
             with ui.row().classes("w-full items-center gap-4 flex-wrap"):
                 cat_names = ["All"] + [c.name for c in categories]
+                _initial_cat = category if category in cat_names else "All"
                 filter_select = ui.select(
-                    cat_names, value="All", label="Category",
+                    cat_names, value=_initial_cat, label="Category",
                 ).props("outlined dense").classes("w-48")
 
                 status_select = ui.select(
@@ -530,6 +699,12 @@ def products_page():
                     on_click=lambda: _bulk_deselect_all(),
                 ).props("flat dense color=grey size=sm")
                 ui.space()
+                _bulk_mp_options = {d: info["label"] for d, info in AMAZON_MARKETPLACES.items()}
+                bulk_marketplace_select = ui.select(
+                    options=_bulk_mp_options,
+                    value="amazon.com",
+                    label="Marketplace",
+                ).props("outlined dense").classes("w-56")
                 bulk_research_btn = ui.button(
                     "Research Selected", icon="search",
                 ).props("color=positive size=sm")
@@ -638,12 +813,17 @@ def products_page():
 
                 research_dialog.open()
 
-                search_service = AmazonSearchService(api_key=SERPAPI_KEY)
+                _selected_domain = bulk_marketplace_select.value
+                search_service = AmazonSearchService(api_key=SERPAPI_KEY, amazon_domain=_selected_domain)
                 analyzer = CompetitionAnalyzer()
 
                 log_area.push(
                     f"[{datetime.now().strftime('%H:%M:%S')}] "
                     f"Starting research for {len(ids)} product(s)..."
+                )
+                log_area.push(
+                    f"[{datetime.now().strftime('%H:%M:%S')}] "
+                    f"Marketplace: {_selected_domain}"
                 )
 
                 total = len(ids)
@@ -753,7 +933,7 @@ def products_page():
                             search_session = SearchSession(
                                 product_id=product.id,
                                 search_query=query,
-                                amazon_domain="amazon.com",
+                                amazon_domain=_selected_domain,
                                 total_results=results.get(
                                     "total_results_across_pages", comp_count
                                 ),
@@ -1256,32 +1436,81 @@ def products_page():
 
                         is_table = view_toggle.value
 
-                        if is_table:
-                            for p in products:
-                                comp_count = comp_counts.get(p.id, 0)
-                                session_count = len(p.search_sessions)
-                                _render_product_row(p, comp_count, session_count, db)
-                        else:
-                            with ui.element("div").classes(
-                                "w-full grid gap-4"
-                            ).style(
-                                "grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))"
+                        # Group products by category
+                        from collections import OrderedDict
+                        cat_groups: OrderedDict[str, list] = OrderedDict()
+                        for p in products:
+                            cat_name = p.category.name if p.category else "Uncategorized"
+                            cat_groups.setdefault(cat_name, []).append(p)
+
+                        for cat_name, cat_products in cat_groups.items():
+                            cat_comp_total = sum(comp_counts.get(p.id, 0) for p in cat_products)
+                            # Category status summary
+                            statuses = {}
+                            for p in cat_products:
+                                st = getattr(p, "status", None) or "imported"
+                                statuses[st] = statuses.get(st, 0) + 1
+
+                            with ui.expansion(
+                                value=True,
+                            ).classes("w-full").props("dense header-class='py-1'").style(
+                                "border-left: 3px solid #A08968; background: #faf8f5; "
+                                "border-radius: 6px; margin-bottom: 8px"
                             ):
-                                for p in products:
-                                    comp_count = comp_counts.get(p.id, 0)
-                                    session_count = len(p.search_sessions)
-                                    _render_product_card(p, comp_count, session_count, db)
+                                # Custom header slot
+                                with ui.row().classes(
+                                    "items-center gap-3 w-full py-1"
+                                ).style("min-height: 40px"):
+                                    ui.icon("category", size="sm").classes("text-accent")
+                                    ui.label(cat_name).classes("text-subtitle2 font-bold")
+                                    ui.badge(
+                                        str(len(cat_products)),
+                                        color="accent",
+                                    ).props("rounded").tooltip("Products in category")
+                                    ui.label(
+                                        f"{cat_comp_total} competitors"
+                                    ).classes("text-caption text-secondary")
+                                    # Mini status badges
+                                    for st, cnt in statuses.items():
+                                        ui.badge(
+                                            f"{cnt} {_STATUS_LABELS.get(st, st)}",
+                                            color=_STATUS_COLORS.get(st, "grey-5"),
+                                        ).props("outline dense")
+
+                                # Products inside category
+                                if is_table:
+                                    for p in cat_products:
+                                        comp_count = comp_counts.get(p.id, 0)
+                                        session_count = len(p.search_sessions)
+                                        _render_product_row(p, comp_count, session_count, db)
+                                else:
+                                    with ui.element("div").classes(
+                                        "w-full grid gap-4"
+                                    ).style(
+                                        "grid-template-columns: repeat(auto-fill, minmax(320px, 1fr))"
+                                    ):
+                                        for p in cat_products:
+                                            comp_count = comp_counts.get(p.id, 0)
+                                            session_count = len(p.search_sessions)
+                                            _render_product_card(p, comp_count, session_count, db)
                 finally:
                     db.close()
 
             # Wire up all filter controls to refresh (reset to page 1)
+            def _clear_preset_if_manual():
+                """Clear preset selection when user manually changes a filter."""
+                if not _applying_preset["active"] and preset_select.value is not None:
+                    preset_select.value = None
+
             def _filter_and_reset(_=None):
+                _clear_preset_if_manual()
                 _page_state["current"] = 1
                 refresh_products()
 
             _search_timer = {"ref": None}
 
             def _debounced_search(_):
+                _clear_preset_if_manual()
                 if _search_timer["ref"] is not None:
                     _search_timer["ref"].cancel()
                 _search_timer["ref"] = ui.timer(
@@ -1293,10 +1522,13 @@ def products_page():
             status_select.on_value_change(_filter_and_reset)
             profit_filter.on_value_change(_filter_and_reset)
             comp_range_filter.on_value_change(_filter_and_reset)
-            sort_select.on_value_change(lambda _: refresh_products())
+            sort_select.on_value_change(lambda _: (_clear_preset_if_manual(), refresh_products()))
             view_toggle.on_value_change(lambda _: refresh_products())
 
             refresh_products()
+
+            if search:
+                ui.timer(0.3, lambda: refresh_products(), once=True)
         finally:
             session.close()
 

@@ -1,6 +1,9 @@
 """Dashboard page -- market intelligence overview."""
+from datetime import datetime, timedelta
+from urllib.parse import quote
+
 from nicegui import ui
-from sqlalchemy import func
+from sqlalchemy import func, and_
 from sqlalchemy.orm import joinedload
 
 from src.models import get_session, Category, Product, AmazonCompetitor, SearchSession
@@ -49,13 +52,32 @@ def dashboard_page():
             competitor_count = session.query(AmazonCompetitor).count()
             search_count = session.query(SearchSession).count()
 
+            # Action widget counts
+            # Products with status=imported and NO SearchSession
+            products_with_sessions = (
+                session.query(SearchSession.product_id).distinct().subquery()
+            )
+            need_research_count = (
+                session.query(Product)
+                .filter(
+                    Product.status == "imported",
+                    ~Product.id.in_(session.query(products_with_sessions.c.product_id)),
+                )
+                .count()
+            )
+            awaiting_review_count = (
+                session.query(Product).filter(Product.status == "researched").count()
+            )
+            approved_count = (
+                session.query(Product).filter(Product.status == "approved").count()
+            )
+
             # Avg opportunity: average opportunity_score from the latest
             # search session per product (computed by CompetitionAnalyzer).
             from src.services.competition_analyzer import CompetitionAnalyzer as _CA
             _analyzer = _CA()
 
             # Get latest session ID per product in a single subquery
-            from sqlalchemy import distinct
             latest_session_subq = (
                 session.query(
                     SearchSession.product_id,
@@ -123,6 +145,7 @@ def dashboard_page():
             cat_stats = (
                 session.query(
                     Category.name,
+                    Category.id,
                     func.avg(SearchSession.avg_price),
                     func.avg(SearchSession.avg_rating),
                     func.count(AmazonCompetitor.id),
@@ -130,7 +153,7 @@ def dashboard_page():
                 .join(Product, Product.category_id == Category.id)
                 .join(SearchSession, SearchSession.product_id == Product.id)
                 .outerjoin(AmazonCompetitor, AmazonCompetitor.product_id == Product.id)
-                .group_by(Category.name)
+                .group_by(Category.name, Category.id)
                 .all()
             )
 
@@ -187,25 +210,122 @@ def dashboard_page():
             _top_with_score.sort(key=lambda x: x[1], reverse=True)
             top_products = [item[0] for item in _top_with_score[:10]]
 
-            # Recent searches with product name
-            recent = (
+            # VVS per category: compute average VVS for each category
+            _vvs_by_category: dict[str, list[float]] = {}
+            for tp in _top_query:
+                vvs_val = _vvs_by_product.get(tp.id, 0.0)
+                if vvs_val > 0:
+                    _vvs_by_category.setdefault(tp.category_name, []).append(vvs_val)
+
+            # Best opportunity per category (highest VVS)
+            _best_by_category: dict[str, str] = {}
+            for tp in _top_query:
+                vvs_val = _vvs_by_product.get(tp.id, 0.0)
+                cat = tp.category_name
+                if cat not in _best_by_category or vvs_val > _vvs_by_product.get(
+                    next((t.id for t in _top_query if t.name == _best_by_category.get(cat)), 0), 0.0
+                ):
+                    _best_by_category[cat] = tp.name
+
+            # Activity feed: combined recent actions from SearchSession + Product updates
+            recent_searches = (
                 session.query(SearchSession)
                 .options(joinedload(SearchSession.product))
                 .order_by(SearchSession.created_at.desc())
-                .limit(5)
+                .limit(10)
                 .all()
             )
+            recent_products = (
+                session.query(Product)
+                .filter(Product.updated_at.isnot(None))
+                .order_by(Product.updated_at.desc())
+                .limit(10)
+                .all()
+            )
+
+            # Build unified activity list
+            activities: list[dict] = []
+            for s in recent_searches:
+                total_results = (s.organic_results or 0) + (s.sponsored_results or 0)
+                activities.append({
+                    "timestamp": s.created_at,
+                    "icon": "search",
+                    "color": "secondary",
+                    "description": f"Researched - found {total_results} competitors",
+                    "product_name": s.product.name if s.product else "Unknown",
+                    "product_id": s.product_id,
+                })
+            for p in recent_products:
+                if p.status == "approved":
+                    desc = "Approved for sourcing"
+                    icon, color = "check_circle", "positive"
+                elif p.status == "rejected":
+                    desc = "Rejected"
+                    icon, color = "cancel", "negative"
+                elif p.status == "researched":
+                    desc = "Research completed"
+                    icon, color = "rate_review", "warning"
+                elif p.status == "imported":
+                    desc = "Imported"
+                    icon, color = "file_upload", "accent"
+                else:
+                    desc = f"Status: {p.status}"
+                    icon, color = "info", "secondary"
+                activities.append({
+                    "timestamp": p.updated_at,
+                    "icon": icon,
+                    "color": color,
+                    "description": desc,
+                    "product_name": p.name,
+                    "product_id": p.id,
+                })
+            # Sort by timestamp desc and take top 10
+            activities.sort(key=lambda a: a["timestamp"] or datetime.min, reverse=True)
+            activities = activities[:10]
+
         finally:
             session.close()
 
         has_research = search_count > 0 and competitor_count > 0
 
         # ------------------------------------------------------------------
-        # KPI row
+        # Action Widgets row (top of dashboard)
+        # ------------------------------------------------------------------
+        with ui.row().classes("gap-4 flex-wrap w-full"):
+            _action_widget(
+                label="Need Research",
+                count=need_research_count,
+                icon="search",
+                bg_color="#FFF3E0",
+                border_color="#FF9800",
+                text_color="#E65100",
+                href="/products?status=imported",
+            )
+            _action_widget(
+                label="Awaiting Review",
+                count=awaiting_review_count,
+                icon="rate_review",
+                bg_color="#E3F2FD",
+                border_color="#2196F3",
+                text_color="#0D47A1",
+                href="/products?status=researched",
+            )
+            _action_widget(
+                label="Approved",
+                count=approved_count,
+                icon="check_circle",
+                bg_color="#E8F5E9",
+                border_color="#4CAF50",
+                text_color="#1B5E20",
+                href="/products?status=approved",
+            )
+
+        # ------------------------------------------------------------------
+        # KPI row (with clickable cards where appropriate)
         # ------------------------------------------------------------------
         with ui.row().classes("gap-4 flex-wrap"):
-            stats_card("Categories", str(cat_count), icon="category", color="primary")
-            stats_card("Products", str(product_count), icon="inventory_2", color="accent")
+            _clickable_stats_card("Categories", str(cat_count), icon="category", color="primary", href="/products")
+            _clickable_stats_card("Products", str(product_count), icon="inventory_2", color="accent", href="/products")
             stats_card("Competitors", str(competitor_count), icon="groups", color="positive")
             stats_card("Searches", str(search_count), icon="search", color="secondary")
             if avg_opportunity is not None:
@@ -246,9 +366,9 @@ def dashboard_page():
                 if cat_stats:
                     with ui.card().classes("flex-1 min-w-[400px] p-4"):
                         cat_names = [row[0] for row in cat_stats]
-                        avg_prices = [round(row[1], 2) if row[1] else 0 for row in cat_stats]
-                        avg_ratings = [round(row[2], 1) if row[2] else 0 for row in cat_stats]
-                        comp_counts = [row[3] or 0 for row in cat_stats]
+                        avg_prices = [round(row[2], 2) if row[2] else 0 for row in cat_stats]
+                        avg_ratings = [round(row[3], 1) if row[3] else 0 for row in cat_stats]
+                        comp_counts = [row[4] or 0 for row in cat_stats]
 
                         ui.echart({
                             'title': {'text': 'Category Comparison', 'left': 'center',
@@ -313,23 +433,130 @@ def dashboard_page():
                     ui.label("5. Export results to Excel from the Export page.").classes("text-body2")
 
         # ------------------------------------------------------------------
-        # Recent Searches (enhanced with product name)
+        # Category Performance table (enhanced with VVS)
         # ------------------------------------------------------------------
-        if recent:
+        if has_research and cat_stats:
             with ui.card().classes("w-full p-4"):
-                ui.label("Recent Searches").classes("text-subtitle1 font-bold mb-2")
-                columns = [
-                    {"name": "product", "label": "Product", "field": "product", "align": "left"},
-                    {"name": "query", "label": "Query", "field": "query", "align": "left"},
-                    {"name": "results", "label": "Results", "field": "results", "align": "right"},
-                    {"name": "date", "label": "Date", "field": "date", "align": "left"},
+                ui.label("Category Performance").classes("text-subtitle1 font-bold mb-2")
+                cat_columns = [
+                    {"name": "category", "label": "Category", "field": "category", "align": "left"},
+                    {"name": "avg_price", "label": "Avg Price", "field": "avg_price", "align": "right"},
+                    {"name": "avg_rating", "label": "Avg Rating", "field": "avg_rating", "align": "right"},
+                    {"name": "competitors", "label": "Competitors", "field": "competitors", "align": "right"},
+                    {"name": "avg_vvs", "label": "Avg VVS", "field": "avg_vvs", "align": "center", "sortable": True},
+                    {"name": "best_product", "label": "Best Opportunity", "field": "best_product", "align": "left"},
                 ]
-                rows = []
-                for s in recent:
-                    rows.append({
-                        "product": s.product.name if s.product else "—",
-                        "query": s.search_query,
-                        "results": (s.organic_results or 0) + (s.sponsored_results or 0),
-                        "date": s.created_at.strftime("%Y-%m-%d %H:%M") if s.created_at else "",
+                cat_rows = []
+                for row in cat_stats:
+                    cat_name = row[0]
+                    vvs_list = _vvs_by_category.get(cat_name, [])
+                    avg_vvs = round(sum(vvs_list) / len(vvs_list), 1) if vvs_list else 0.0
+                    best_prod = _best_by_category.get(cat_name, "-")
+                    cat_rows.append({
+                        "category": cat_name,
+                        "avg_price": f"${row[2]:.2f}" if row[2] else "N/A",
+                        "avg_rating": f"{row[3]:.1f}" if row[3] else "N/A",
+                        "competitors": row[4] or 0,
+                        "avg_vvs": f"{avg_vvs:.1f}" if avg_vvs > 0 else "-",
+                        "_avg_vvs_num": avg_vvs,
+                        "_cat_name": cat_name,
                     })
-                ui.table(columns=columns, rows=rows, row_key="query").props("flat bordered dense")
+
+                cat_table = ui.table(
+                    columns=cat_columns, rows=cat_rows, row_key="category"
+                ).props("flat bordered dense").classes("w-full")
+
+                # Color-code VVS cells and make category names clickable
+                cat_table.add_slot(
+                    "body-cell-avg_vvs",
+                    r"""
+                    <q-td :props="props">
+                        <q-badge
+                            :color="parseFloat(props.value) >= 7 ? 'green'
+                                   : parseFloat(props.value) >= 4 ? 'orange'
+                                   : props.value === '-' ? 'grey' : 'red'"
+                            :label="props.value"
+                            class="text-bold"
+                        />
+                    </q-td>
+                    """,
+                )
+                cat_table.add_slot(
+                    "body-cell-category",
+                    r"""
+                    <q-td :props="props">
+                        <a :href="'/products?category=' + encodeURIComponent(props.row._cat_name)"
+                           class="text-primary cursor-pointer"
+                           style="text-decoration: none; font-weight: 500;">
+                            {{ props.value }}
+                        </a>
+                    </q-td>
+                    """,
+                )
+
+        # ------------------------------------------------------------------
+        # Activity Feed (replaces old Recent Searches)
+        # ------------------------------------------------------------------
+        if activities:
+            with ui.card().classes("w-full p-4"):
+                ui.label("Recent Activity").classes("text-subtitle1 font-bold mb-2")
+                with ui.column().classes("gap-0 w-full"):
+                    for i, act in enumerate(activities):
+                        with ui.row().classes(
+                            "items-start gap-3 py-2 w-full"
+                            + (" border-t" if i > 0 else "")
+                        ).style("border-color: #e0e0e0" if i > 0 else ""):
+                            # Timeline dot/icon
+                            ui.icon(act["icon"]).classes(
+                                f"text-{act['color']} text-xl mt-0.5"
+                            )
+                            with ui.column().classes("gap-0 flex-1"):
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.link(
+                                        act["product_name"],
+                                        target=f"/products/{act['product_id']}",
+                                    ).classes(
+                                        "text-body2 font-medium no-underline text-primary"
+                                    )
+                                    ui.label(act["description"]).classes(
+                                        "text-body2 text-secondary"
+                                    )
+                                if act["timestamp"]:
+                                    ui.label(
+                                        act["timestamp"].strftime("%b %d, %Y %H:%M")
+                                    ).classes("text-caption text-grey-6")
+
+
+def _action_widget(
+    label: str,
+    count: int,
+    icon: str,
+    bg_color: str,
+    border_color: str,
+    text_color: str,
+    href: str,
+):
+    """Render a colored action widget card with count and click navigation."""
+    with ui.link(target=href).classes("no-underline"):
+        with ui.card().classes("px-5 py-3 cursor-pointer").style(
+            f"background: {bg_color}; border-left: 4px solid {border_color}; "
+            f"min-width: 200px; transition: transform 0.15s ease;"
+        ).on("mouseenter", js_handler="(e) => e.target.closest('.q-card').style.transform = 'translateY(-2px)'") \
+         .on("mouseleave", js_handler="(e) => e.target.closest('.q-card').style.transform = ''"):
+            with ui.row().classes("items-center gap-3"):
+                ui.icon(icon).classes("text-3xl").style(f"color: {text_color}")
+                with ui.column().classes("gap-0"):
+                    ui.label(str(count)).classes("text-h4 font-bold").style(
+                        f"color: {text_color}; line-height: 1.2"
+                    )
+                    ui.label(label).classes("text-caption").style(
+                        f"color: {text_color}; opacity: 0.85"
+                    )
+
+
+def _clickable_stats_card(
+    title: str, value: str, icon: str = "info", color: str = "primary", href: str = "/",
+):
+    """Render a stats card wrapped in a clickable link."""
+    with ui.link(target=href).classes("no-underline"):
+        stats_card(title, value, icon=icon, color=color)

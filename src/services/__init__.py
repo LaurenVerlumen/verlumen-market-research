@@ -4,6 +4,7 @@ from src.services.amazon_search import AmazonSearchError, AmazonSearchService
 from src.services.competition_analyzer import CompetitionAnalyzer
 from src.services.demand_estimator import estimate_demand
 from src.services.excel_exporter import ExcelExporter
+from src.services.pdf_exporter import export_pdf
 from src.services.excel_importer import parse_excel
 from src.services.fee_calculator import calculate_fees
 from src.services.image_fetcher import ImageFetcher, download_image, save_uploaded_image
@@ -22,6 +23,7 @@ __all__ = [
     "AmazonSearchError",
     "CompetitionAnalyzer",
     "ExcelExporter",
+    "export_pdf",
     "ImageFetcher",
     "download_image",
     "save_uploaded_image",

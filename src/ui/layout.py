@@ -1,31 +1,39 @@
 """Shared layout: header, sidebar navigation, and content area."""
 from pathlib import Path
+from urllib.parse import quote
 
 from nicegui import app, ui
+
+from src.models.database import get_session
+from src.models.category import Category
 
 # Serve the public directory for static assets (logo, images)
 _PUBLIC_DIR = Path(__file__).resolve().parent.parent.parent / "public"
 app.add_static_files("/public", str(_PUBLIC_DIR))
 
+# Global reference so other pages (e.g. Settings) can call refresh_nav_categories()
+_nav_categories_refreshable = None
 
-NAV_ITEMS = [
-    {"label": "Dashboard", "icon": "dashboard", "path": "/"},
-    {"label": "Products", "icon": "inventory_2", "path": "/products"},
-    {"label": "Export", "icon": "file_download", "path": "/export"},
-    {"label": "Settings", "icon": "settings", "path": "/settings"},
-]
 
 # JavaScript to highlight the current sidebar nav link on page load.
-# Finds <a> tags in the sidebar whose href matches the current path,
-# then styles the first child row div as the active link.
 _ACTIVE_NAV_JS = """
 (function() {
     var path = window.location.pathname;
+    var search = window.location.search;
+    var full = path + search;
     var links = document.querySelectorAll('.q-drawer a[href]');
     links.forEach(function(a) {
         var href = a.getAttribute('href');
-        var isActive = (href === '/' && path === '/') ||
-                       (href !== '/' && path.startsWith(href));
+        var isActive = false;
+        if (href.indexOf('?') !== -1) {
+            isActive = (full === href);
+        } else if (href === '/') {
+            isActive = (path === '/');
+        } else if (href === '/products') {
+            isActive = (path === '/products' && search === '');
+        } else {
+            isActive = path.startsWith(href);
+        }
         if (isActive) {
             var row = a.querySelector('.row, .q-item');
             if (row) {
@@ -43,11 +51,9 @@ _ACTIVE_NAV_JS = """
 
 
 def build_layout(title: str = "Verlumen Market Research"):
-    """Create the shared page layout with sidebar navigation.
+    """Create the shared page layout with sidebar navigation."""
+    global _nav_categories_refreshable
 
-    Call this at the top of every page function, then add content
-    into the returned container.
-    """
     ui.colors(
         primary="#4A4443",
         secondary="#5f6368",
@@ -62,16 +68,44 @@ def build_layout(title: str = "Verlumen Market Research"):
             ui.image("/public/images/logo-white.svg").classes("w-28")
             ui.separator().props("vertical").classes("bg-white opacity-30")
             ui.label("Market Research").classes("text-subtitle1 text-white")
+
+        # Global search
+        _search = ui.input(placeholder="Search products...").classes("w-64").props(
+            "dark dense standout='bg-white/10' input-class='text-white'"
+        )
+        _search.props('prepend-inner-icon="search"')
+
+        def _do_global_search(e=None):
+            q = _search.value
+            if q and q.strip():
+                ui.navigate.to(f"/products?search={quote(q.strip())}")
+
+        _search.on("keydown.enter", _do_global_search)
+
         ui.space()
 
-    # Left drawer (sidebar nav) with logo icon at top
+    # Left drawer (sidebar nav)
     with ui.left_drawer(value=True).classes("bg-grey-1") as drawer:
         drawer.props("width=220 bordered")
-        with ui.column().classes("items-center py-3"):
-            ui.image("/public/images/logo-icon.svg").classes("w-10")
-        ui.separator().classes("mb-2")
-        for item in NAV_ITEMS:
-            _nav_link(item["label"], item["icon"], item["path"])
+        ui.element("div").classes("h-3")
+
+        _nav_link("Dashboard", "dashboard", "/")
+        _nav_link("Products", "inventory_2", "/products")
+
+        # Refreshable category sub-links
+        @ui.refreshable
+        def _category_nav():
+            categories = _load_categories()
+            if categories:
+                with ui.column().classes("w-full pl-6 gap-0"):
+                    for cat in categories:
+                        _nav_sub_link(cat["name"], cat["count"])
+
+        _category_nav()
+        _nav_categories_refreshable = _category_nav
+
+        _nav_link("Export", "file_download", "/export")
+        _nav_link("Settings", "settings", "/settings")
 
     # Highlight active sidebar nav link after page loads
     ui.timer(0.1, lambda: ui.run_javascript(_ACTIVE_NAV_JS), once=True)
@@ -81,8 +115,33 @@ def build_layout(title: str = "Verlumen Market Research"):
     return content
 
 
+def refresh_nav_categories():
+    """Refresh the category sub-links in the sidebar. Call from any page."""
+    global _nav_categories_refreshable
+    if _nav_categories_refreshable is not None:
+        try:
+            _nav_categories_refreshable.refresh()
+        except Exception:
+            pass
+
+
+def _load_categories() -> list[dict]:
+    """Load categories with product counts for the nav."""
+    from src.models import Product
+    db = get_session()
+    try:
+        cats = db.query(Category).order_by(Category.name).all()
+        result = []
+        for c in cats:
+            count = db.query(Product).filter(Product.category_id == c.id).count()
+            result.append({"name": c.name, "count": count})
+        return result
+    finally:
+        db.close()
+
+
 def _nav_link(label: str, icon: str, path: str):
-    """Render a single sidebar nav item."""
+    """Render a main sidebar nav item."""
     with ui.link(target=path).classes("no-underline w-full"):
         with ui.row().classes(
             "items-center gap-3 px-4 py-2 rounded-lg w-full "
@@ -90,3 +149,18 @@ def _nav_link(label: str, icon: str, path: str):
         ):
             ui.icon(icon).classes("text-secondary")
             ui.label(label).classes("text-body1 text-secondary")
+
+
+def _nav_sub_link(name: str, count: int):
+    """Render a category sub-link under Products."""
+    encoded_path = f"/products?category={quote(name)}"
+    with ui.link(target=encoded_path).classes("no-underline w-full"):
+        with ui.row().classes(
+            "items-center gap-2 px-3 py-1 rounded w-full "
+            "hover:bg-blue-50 cursor-pointer"
+        ).style("min-height: 32px"):
+            ui.icon("label", size="xs").classes("text-accent")
+            ui.label(name).classes("text-body2 text-secondary flex-1")
+            ui.badge(str(count), color="grey-4").props(
+                "rounded dense"
+            ).classes("text-grey-8")

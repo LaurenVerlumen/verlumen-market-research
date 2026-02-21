@@ -1,11 +1,13 @@
 """Export research data to a multi-sheet Excel workbook."""
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from openpyxl import Workbook
+from openpyxl.chart import BarChart, Reference
 from openpyxl.formatting.rule import CellIsRule
-from openpyxl.styles import Alignment, Font, PatternFill, numbers
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side, numbers
 from openpyxl.utils import get_column_letter
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,20 @@ _GREEN_FONT = Font(color="006100")
 _YELLOW_FONT = Font(color="9C5700")
 _RED_FONT = Font(color="9C0006")
 _GRAY_FONT = Font(color="999999", italic=True)
+
+# Executive summary styles (Verlumen brand)
+_TITLE_FONT = Font(bold=True, size=16, color="1F4E79")
+_SUBTITLE_FONT = Font(bold=False, size=11, color="4472C4")
+_KPI_HEADER_FONT = Font(bold=True, size=11, color="FFFFFF")
+_KPI_HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+_KPI_BORDER = Border(
+    left=Side(style="thin", color="1F4E79"),
+    right=Side(style="thin", color="1F4E79"),
+    top=Side(style="thin", color="1F4E79"),
+    bottom=Side(style="thin", color="1F4E79"),
+)
+_VERLUMEN_BLUE = "1F4E79"
+_VERLUMEN_ACCENT = "4472C4"
 
 
 class ExcelExporter:
@@ -54,25 +70,29 @@ class ExcelExporter:
         """
         wb = Workbook()
 
-        # Sheet 1 -- Summary
-        ws_summary = wb.active
-        ws_summary.title = "Summary"
+        # Sheet 1 -- Executive Summary (new: charts + KPIs)
+        ws_exec = wb.active
+        ws_exec.title = "Executive Summary"
+        self._build_executive_summary_sheet(ws_exec, products_data)
+
+        # Sheet 2 -- Summary
+        ws_summary = wb.create_sheet("Summary")
         self._build_summary_sheet(ws_summary, products_data, include_ml=include_ml)
 
-        # Sheet 2 -- Detailed Competitors
+        # Sheet 3 -- Detailed Competitors
         ws_detail = wb.create_sheet("Detailed Competitors")
         self._build_detail_sheet(ws_detail, products_data)
 
-        # Sheet 3 -- Category Analysis
+        # Sheet 4 -- Category Analysis
         ws_cat = wb.create_sheet("Category Analysis")
         self._build_category_sheet(ws_cat, products_data)
 
-        # Sheet 4 -- Profit Analysis (optional)
+        # Sheet 5 -- Profit Analysis (optional)
         if include_profit:
             ws_profit = wb.create_sheet("Profit Analysis")
             self._build_profit_sheet(ws_profit, products_data)
 
-        # Sheet 5 -- AI Recommendations (optional)
+        # Sheet 6 -- AI Recommendations (optional)
         if include_ml:
             ws_ai = wb.create_sheet("AI Recommendations")
             self._build_ai_recommendations_sheet(ws_ai, products_data)
@@ -191,6 +211,146 @@ class ExcelExporter:
 
         self._auto_column_width(ws)
 
+    def _build_executive_summary_sheet(self, ws: Any, products: list[dict]) -> None:
+        """Sheet 1: Executive Summary with KPI table and embedded charts."""
+        # -- Title row --
+        ws.merge_cells("A1:F1")
+        title_cell = ws.cell(row=1, column=1, value="Verlumen Market Research Report")
+        title_cell.font = _TITLE_FONT
+        title_cell.alignment = Alignment(horizontal="center")
+
+        ws.merge_cells("A2:F2")
+        date_cell = ws.cell(row=2, column=1, value=f"Generated: {date.today().strftime('%B %d, %Y')}")
+        date_cell.font = _SUBTITLE_FONT
+        date_cell.alignment = Alignment(horizontal="center")
+
+        # -- KPI calculations --
+        researched = [
+            p for p in products
+            if p.get("analysis") and p["analysis"].get("total_competitors", 0) > 0
+        ]
+        total_products = len(products)
+        avg_opp = 0.0
+        avg_comp = 0.0
+        total_competitors = 0
+        if researched:
+            opp_scores = [p["analysis"].get("opportunity_score", 0) for p in researched]
+            comp_scores = [p["analysis"].get("competition_score", 0) for p in researched]
+            avg_opp = sum(opp_scores) / len(opp_scores)
+            avg_comp = sum(comp_scores) / len(comp_scores)
+            total_competitors = sum(
+                p["analysis"].get("total_competitors", 0) for p in researched
+            )
+
+        # -- KPI table at row 4 --
+        kpi_headers = ["Metric", "Value"]
+        for col_idx, h in enumerate(kpi_headers, start=1):
+            cell = ws.cell(row=4, column=col_idx, value=h)
+            cell.font = _KPI_HEADER_FONT
+            cell.fill = _KPI_HEADER_FILL
+            cell.border = _KPI_BORDER
+            cell.alignment = Alignment(horizontal="center")
+
+        kpis = [
+            ("Total Products", total_products),
+            ("Avg Opportunity Score", round(avg_opp, 1)),
+            ("Avg Competition Score", round(avg_comp, 1)),
+            ("Total Competitors Tracked", total_competitors),
+        ]
+        for i, (label, value) in enumerate(kpis):
+            row = 5 + i
+            lbl_cell = ws.cell(row=row, column=1, value=label)
+            lbl_cell.font = Font(bold=True, size=11)
+            lbl_cell.border = _KPI_BORDER
+            val_cell = ws.cell(row=row, column=2, value=value)
+            val_cell.border = _KPI_BORDER
+            val_cell.alignment = Alignment(horizontal="center")
+            if isinstance(value, float):
+                val_cell.number_format = "0.0"
+
+        # -- Chart 1: Price Distribution (bar chart) --
+        # Build price buckets from competitor prices
+        buckets = {"$0-10": 0, "$10-25": 0, "$25-50": 0, "$50-100": 0, "$100+": 0}
+        for p in products:
+            for c in p.get("competitors", []):
+                price = c.get("price")
+                if price is None:
+                    continue
+                if price < 10:
+                    buckets["$0-10"] += 1
+                elif price < 25:
+                    buckets["$10-25"] += 1
+                elif price < 50:
+                    buckets["$25-50"] += 1
+                elif price < 100:
+                    buckets["$50-100"] += 1
+                else:
+                    buckets["$100+"] += 1
+
+        # Write price distribution data to a helper area (row 11+)
+        ws.cell(row=11, column=1, value="Price Range").font = Font(bold=True, size=9, color="999999")
+        ws.cell(row=11, column=2, value="Count").font = Font(bold=True, size=9, color="999999")
+        for i, (bucket, count) in enumerate(buckets.items()):
+            ws.cell(row=12 + i, column=1, value=bucket)
+            ws.cell(row=12 + i, column=2, value=count)
+
+        chart1 = BarChart()
+        chart1.type = "col"
+        chart1.title = "Price Distribution"
+        chart1.y_axis.title = "Number of Products"
+        chart1.x_axis.title = "Price Range"
+        chart1.style = 10
+        data1 = Reference(ws, min_col=2, min_row=11, max_row=16)
+        cats1 = Reference(ws, min_col=1, min_row=12, max_row=16)
+        chart1.add_data(data1, titles_from_data=True)
+        chart1.set_categories(cats1)
+        chart1.shape = 4
+        chart1.width = 16
+        chart1.height = 10
+        # Apply Verlumen blue to the bars
+        if chart1.series:
+            chart1.series[0].graphicalProperties.solidFill = _VERLUMEN_ACCENT
+        ws.add_chart(chart1, "D4")
+
+        # -- Chart 2: Top 10 Products by Opportunity Score --
+        sorted_products = sorted(
+            researched,
+            key=lambda x: x.get("analysis", {}).get("opportunity_score", 0),
+            reverse=True,
+        )[:10]
+
+        ws.cell(row=18, column=1, value="Product").font = Font(bold=True, size=9, color="999999")
+        ws.cell(row=18, column=2, value="Opportunity Score").font = Font(bold=True, size=9, color="999999")
+        for i, p in enumerate(sorted_products):
+            name = p.get("name", "")
+            # Truncate long names for chart readability
+            display_name = name[:30] + "..." if len(name) > 30 else name
+            ws.cell(row=19 + i, column=1, value=display_name)
+            ws.cell(row=19 + i, column=2, value=p["analysis"].get("opportunity_score", 0))
+
+        if sorted_products:
+            last_data_row = 18 + len(sorted_products)
+            chart2 = BarChart()
+            chart2.type = "bar"
+            chart2.title = "Top 10 Products by Opportunity Score"
+            chart2.y_axis.title = "Product"
+            chart2.x_axis.title = "Opportunity Score"
+            chart2.style = 10
+            data2 = Reference(ws, min_col=2, min_row=18, max_row=last_data_row)
+            cats2 = Reference(ws, min_col=1, min_row=19, max_row=last_data_row)
+            chart2.add_data(data2, titles_from_data=True)
+            chart2.set_categories(cats2)
+            chart2.shape = 4
+            chart2.width = 16
+            chart2.height = 12
+            if chart2.series:
+                chart2.series[0].graphicalProperties.solidFill = _VERLUMEN_BLUE
+            ws.add_chart(chart2, "D18")
+
+        # Set column widths for the KPI area
+        ws.column_dimensions["A"].width = 28
+        ws.column_dimensions["B"].width = 18
+
     def _build_detail_sheet(self, ws: Any, products: list[dict]) -> None:
         headers = [
             "Our Product",
@@ -285,6 +445,58 @@ class ExcelExporter:
         if last_row >= 2:
             opp_range = f"D2:D{last_row}"
             self._add_traffic_light_formatting(ws, opp_range, thresholds=(60, 30))
+
+        # -- Grouped bar chart: Avg Price + Avg Rating per Category --
+        if last_row >= 2:
+            # Write helper data for chart (avg price col=8, avg rating col=9)
+            # We need the data in adjacent columns for a grouped bar chart
+            ws.cell(row=1, column=8, value="Category").font = Font(bold=True, size=9, color="999999")
+            ws.cell(row=1, column=9, value="Avg Price ($)").font = Font(bold=True, size=9, color="999999")
+            ws.cell(row=1, column=10, value="Avg Rating").font = Font(bold=True, size=9, color="999999")
+
+            chart_row = 2
+            for cat, items in sorted(categories.items()):
+                avg_prices_list = [
+                    i.get("analysis", {}).get("price_mean", 0) for i in items
+                ]
+                avg_ratings = []
+                for i in items:
+                    for c in i.get("competitors", []):
+                        r = c.get("rating")
+                        if r is not None:
+                            avg_ratings.append(r)
+
+                avg_price_val = sum(avg_prices_list) / len(avg_prices_list) if avg_prices_list else 0
+                avg_rating_val = sum(avg_ratings) / len(avg_ratings) if avg_ratings else 0
+
+                ws.cell(row=chart_row, column=8, value=cat)
+                ws.cell(row=chart_row, column=9, value=round(avg_price_val, 2))
+                ws.cell(row=chart_row, column=10, value=round(avg_rating_val, 2))
+                chart_row += 1
+
+            chart_last_row = chart_row - 1
+            if chart_last_row >= 2:
+                chart = BarChart()
+                chart.type = "col"
+                chart.grouping = "clustered"
+                chart.title = "Avg Price & Avg Rating by Category"
+                chart.style = 10
+                chart.y_axis.title = "Value"
+                chart.x_axis.title = "Category"
+
+                data_ref = Reference(ws, min_col=9, min_row=1, max_col=10, max_row=chart_last_row)
+                cats_ref = Reference(ws, min_col=8, min_row=2, max_row=chart_last_row)
+                chart.add_data(data_ref, titles_from_data=True)
+                chart.set_categories(cats_ref)
+                chart.shape = 4
+                chart.width = 20
+                chart.height = 12
+                # Color the series
+                if len(chart.series) > 0:
+                    chart.series[0].graphicalProperties.solidFill = _VERLUMEN_BLUE
+                if len(chart.series) > 1:
+                    chart.series[1].graphicalProperties.solidFill = _VERLUMEN_ACCENT
+                ws.add_chart(chart, "A" + str(last_row + 3))
 
         self._auto_column_width(ws)
 

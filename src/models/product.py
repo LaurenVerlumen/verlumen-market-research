@@ -29,6 +29,7 @@ class Product(Base):
     alibaba_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     amazon_search_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    decision_log: Mapped[str | None] = mapped_column(Text, nullable=True, default="[]")
     status: Mapped[str] = mapped_column(Text, default="imported")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

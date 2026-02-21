@@ -1,7 +1,7 @@
 """Verlumen Market Research Tool - Main entry point."""
 from nicegui import app, ui
 
-from config import APP_TITLE, APP_PORT, IMAGES_DIR
+from config import APP_TITLE, APP_PORT, APP_HOST, IMAGES_DIR
 from src.models import init_db
 from src.ui.pages.dashboard import dashboard_page
 from src.ui.pages.products import products_page
@@ -11,6 +11,10 @@ from src.ui.pages.settings import settings_page
 
 # Initialize database tables on startup
 init_db()
+
+# Start background scheduler (if enabled in config)
+from src.services.scheduler import start_scheduler
+start_scheduler()
 
 # Serve locally-saved product images
 app.add_static_files("/images", str(IMAGES_DIR))
@@ -22,8 +26,8 @@ def index():
 
 
 @ui.page("/products")
-def products_view():
-    products_page()
+def products_view(category: str | None = None, search: str | None = None):
+    products_page(category=category, search=search)
 
 
 @ui.page("/products/{product_id}")
@@ -57,8 +61,14 @@ def evaluation_redirect():
     ui.navigate.to("/products")
 
 
+@app.get("/_health")
+async def health_check():
+    return {"status": "ok", "app": "verlumen-market-research"}
+
+
 ui.run(
     title=APP_TITLE,
+    host=APP_HOST,
     port=APP_PORT,
     reload=False,
     dark=False,

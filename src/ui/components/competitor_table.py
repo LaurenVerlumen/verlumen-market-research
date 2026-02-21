@@ -1,13 +1,31 @@
 """Amazon competitor data table component."""
+import json
+
 from nicegui import ui
 
 from src.services.utils import parse_bought
+
+# localStorage keys for persistent table settings
+_COL_ORDER_KEY = "comp_table_col_order"
+_SORT_KEY = "comp_table_sort"
+_VIS_COLS_KEY = "comp_table_visible_cols"
+
+# Columns that are always visible and not toggleable
+_ALWAYS_VISIBLE = {"actions", "reviewed", "position"}
+
+# Column group presets (column names -> user-friendly group labels)
+_COL_GROUPS = {
+    "Core": ["title", "asin", "price", "rating", "review_count"],
+    "Revenue": ["bought_last_month", "est_revenue", "monthly_sales", "monthly_revenue"],
+    "Seller": ["brand", "seller", "fulfillment", "fba_fees"],
+}
 
 
 COLUMNS = [
     {"name": "actions", "label": "", "field": "actions", "align": "center", "sortable": False},
     {"name": "reviewed", "label": "Seen", "field": "reviewed", "sortable": True, "align": "center"},
     {"name": "position", "label": "#", "field": "position", "sortable": True, "align": "center"},
+    {"name": "trend", "label": "Trend", "field": "trend_status", "align": "center", "sortable": True},
     {"name": "match_score", "label": "Relevance", "field": "match_score_raw", "sortable": True, "align": "center"},
     {"name": "title", "label": "Title", "field": "title", "sortable": True, "align": "left"},
     {"name": "asin", "label": "ASIN", "field": "asin", "sortable": True, "align": "left"},
@@ -29,6 +47,9 @@ COLUMNS = [
 # Read-only columns: no actions, no reviewed checkbox
 COLUMNS_READONLY = [c for c in COLUMNS if c["name"] not in ("actions", "reviewed")]
 
+# All toggleable column names (excludes always-visible)
+_TOGGLEABLE_COLS = [c["name"] for c in COLUMNS if c["name"] not in _ALWAYS_VISIBLE]
+
 
 def competitor_table(
     competitors: list[dict],
@@ -40,6 +61,7 @@ def competitor_table(
     on_field_change=None,
     pagination_state: dict | None = None,
     on_pagination_change=None,
+    trend_data: dict | None = None,
 ):
     """Render a sortable, filterable data table of Amazon competitors.
 
@@ -70,14 +92,64 @@ def competitor_table(
         If provided, called with the full pagination dict whenever the user
         changes page, rows-per-page, or sort settings.
     """
-    all_rows = _prepare_rows(competitors)
+    all_rows = _prepare_rows(competitors, trend_data=trend_data)
     is_editable = on_delete or on_score_change or on_review_toggle
     columns = COLUMNS if is_editable else COLUMNS_READONLY
+
+    # Track visible columns (all toggleable shown by default)
+    visible_cols = list(_TOGGLEABLE_COLS)
 
     with ui.card().classes("w-full p-4"):
         with ui.row().classes("items-center gap-2 mb-2"):
             ui.label(title).classes("text-subtitle1 font-bold")
             count_label = ui.label(f"({len(all_rows)})").classes("text-body2 text-secondary")
+
+            # --- Column visibility toggle ---
+            with ui.button(icon="visibility").props(
+                "flat dense round size=sm color=grey-7"
+            ).classes("q-ml-sm"):
+                ui.tooltip("Show/hide columns")
+                with ui.menu().props("auto-close=false").classes("q-pa-sm") as vis_menu:
+                    ui.label("Column Groups").classes("text-caption text-bold q-mb-xs")
+                    with ui.row().classes("gap-1 q-mb-sm"):
+                        def _apply_group(group_cols: list[str]):
+                            visible_cols.clear()
+                            visible_cols.extend(group_cols)
+                            for cb_name, cb_ref in _col_checkboxes.items():
+                                cb_ref.value = cb_name in visible_cols
+                            _sync_visible_cols()
+
+                        for gname, gcols in _COL_GROUPS.items():
+                            ui.button(
+                                gname,
+                                on_click=lambda g=gcols: _apply_group(g),
+                            ).props("outline dense size=xs color=primary")
+                        ui.button(
+                            "Full",
+                            on_click=lambda: _apply_group(list(_TOGGLEABLE_COLS)),
+                        ).props("outline dense size=xs color=positive")
+
+                    ui.separator()
+                    _col_checkboxes: dict = {}
+                    # Build a name->label mapping from COLUMNS
+                    _col_label_map = {c["name"]: c["label"] for c in COLUMNS}
+                    for col_name in _TOGGLEABLE_COLS:
+                        label_text = _col_label_map.get(col_name, col_name)
+
+                        def _on_toggle(val, cn=col_name):
+                            if val and cn not in visible_cols:
+                                visible_cols.append(cn)
+                            elif not val and cn in visible_cols:
+                                visible_cols.remove(cn)
+                            _sync_visible_cols()
+
+                        cb = ui.checkbox(
+                            label_text,
+                            value=True,
+                            on_change=lambda e, cn=col_name: _on_toggle(e.value, cn),
+                        ).props("dense").classes("q-my-none")
+                        _col_checkboxes[col_name] = cb
+
             if on_bulk_delete:
                 ui.space()
                 sel_label = ui.label("").classes("text-body2 text-secondary")
@@ -158,12 +230,36 @@ def competitor_table(
         ).classes("w-full")
         table.props("flat bordered dense")
 
-        if on_pagination_change:
-            def _handle_pagination(e):
-                if isinstance(e.args, dict):
-                    on_pagination_change(e.args)
+        # Apply initial visible-columns (all always-visible + all toggleable = everything)
+        _all_vis = list(_ALWAYS_VISIBLE) + visible_cols
+        table._props["visible-columns"] = _all_vis
 
-            table.on("update:pagination", _handle_pagination)
+        def _sync_visible_cols():
+            """Update table visible-columns prop and persist to localStorage."""
+            cols_to_show = list(_ALWAYS_VISIBLE) + visible_cols
+            table._props["visible-columns"] = cols_to_show
+            table.update()
+            # Persist to localStorage
+            ui.run_javascript(
+                f"localStorage.setItem('{_VIS_COLS_KEY}', {json.dumps(json.dumps(visible_cols))})"
+            )
+
+        def _handle_pagination(e):
+            if isinstance(e.args, dict):
+                pag = e.args
+                if on_pagination_change:
+                    on_pagination_change(pag)
+                # Persist sort settings to localStorage
+                _sort_data = json.dumps({
+                    "sortBy": pag.get("sortBy"),
+                    "descending": pag.get("descending"),
+                    "rowsPerPage": pag.get("rowsPerPage"),
+                })
+                ui.run_javascript(
+                    f"localStorage.setItem('{_SORT_KEY}', {json.dumps(_sort_data)})"
+                )
+
+        table.on("update:pagination", _handle_pagination)
 
         if on_bulk_delete:
             def _on_selection_change():
@@ -323,6 +419,25 @@ def competitor_table(
                     <span v-else style="color:#999">-</span>
                 </q-td>
             ''')
+
+        # --- Trend indicator cell ---
+        table.add_slot('body-cell-trend', r'''
+            <q-td :props="props">
+                <q-badge v-if="props.row.trend_status === 'new'" color="positive" label="NEW" />
+                <q-badge v-else-if="props.row.trend_status === 'gone'" color="negative" label="GONE" />
+                <span v-else-if="props.row.trend_price_delta != null && props.row.trend_price_delta < 0"
+                      style="color:#2e7d32; font-weight:bold">
+                    <q-icon name="arrow_downward" size="14px" />
+                    ${{ Math.abs(props.row.trend_price_delta).toFixed(2) }}
+                </span>
+                <span v-else-if="props.row.trend_price_delta != null && props.row.trend_price_delta > 0"
+                      style="color:#c62828; font-weight:bold">
+                    <q-icon name="arrow_upward" size="14px" />
+                    ${{ Math.abs(props.row.trend_price_delta).toFixed(2) }}
+                </span>
+                <span v-else style="color:#999">-</span>
+            </q-td>
+        ''')
 
         # --- Price cell ---
         if on_field_change:
@@ -672,16 +787,183 @@ def competitor_table(
 
         # --- Generic field-change handler for inline editing ---
         if on_field_change:
+            # Map emitted field names → row dict keys for local update
+            _FIELD_ROW_KEY = {
+                "price": "price_raw",
+                "brand": "brand",
+                "seller": "seller",
+                "fulfillment": "fulfillment",
+                "rating": "rating_raw",
+                "review_count": "review_count_raw",
+                "bought_last_month": "bought_last_month",
+                "monthly_sales": "monthly_sales_raw",
+                "monthly_revenue": "monthly_revenue_raw",
+                "fba_fees": "fba_fees_raw",
+                "is_prime": "is_prime",
+            }
+
             def _handle_field_change(e):
                 data = e.args
-                if isinstance(data, dict):
-                    on_field_change(data.get('asin', ''), data.get('field', ''), data.get('value'))
+                if not isinstance(data, dict):
+                    return
+                asin = data.get("asin", "")
+                field = data.get("field", "")
+                value = data.get("value")
+
+                # Update local row data so the input retains the new value
+                row_key = _FIELD_ROW_KEY.get(field)
+                if row_key and asin:
+                    for r in all_rows:
+                        if r["asin"] == asin:
+                            if field in ("price", "rating", "fba_fees"):
+                                try:
+                                    r[row_key] = float(value) if value not in (None, "") else None
+                                except (ValueError, TypeError):
+                                    pass
+                            elif field in ("review_count", "monthly_sales", "monthly_revenue"):
+                                try:
+                                    r[row_key] = int(float(value)) if value not in (None, "") else 0
+                                except (ValueError, TypeError):
+                                    pass
+                            elif field == "is_prime":
+                                r[row_key] = "Yes" if value else "No"
+                            elif field == "bought_last_month":
+                                r[row_key] = str(value) if value else "-"
+                                r["bought_raw"] = parse_bought(str(value)) if value else 0
+                                # Recalculate est. revenue
+                                p = r.get("price_raw")
+                                b = r["bought_raw"]
+                                r["est_revenue_raw"] = (p * b) if p and b else 0
+                            else:
+                                r[row_key] = value if value else "-"
+
+                            # Recalc est. revenue when price changes
+                            if field == "price":
+                                b = r.get("bought_raw", 0)
+                                p = r.get("price_raw")
+                                r["est_revenue_raw"] = (p * b) if p and b else 0
+                            break
+                    table.rows = list(all_rows)
+                    table.update()
+
+                on_field_change(asin, field, value)
 
             table.on('fieldchange', _handle_field_change)
 
+        # --- Drag-and-drop column reorder ---
+        table.add_slot('header-cell', r'''
+            <q-th :props="props"
+                  draggable="true"
+                  :style="{cursor: 'grab', userSelect: 'none'}"
+                  @dragstart="e => {
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', props.col.name);
+                      setTimeout(() => { e.target.style.opacity = '0.4' }, 0);
+                  }"
+                  @dragend="e => { e.target.style.opacity = '1' }"
+                  @dragover.prevent
+                  @dragenter="e => { e.target.style.background = '#E8E0D6' }"
+                  @dragleave="e => { e.target.style.background = '' }"
+                  @drop.prevent="e => {
+                      e.target.style.background = '';
+                      const from = e.dataTransfer.getData('text/plain');
+                      if (from && from !== props.col.name)
+                          $parent.$emit('colreorder', {from: from, to: props.col.name});
+                  }">
+                {{ props.col.label }}
+            </q-th>
+        ''')
 
-def _prepare_rows(competitors: list[dict]) -> list[dict]:
+        def _handle_col_reorder(e):
+            data = e.args
+            if not isinstance(data, dict):
+                return
+            from_col = data.get("from", "")
+            to_col = data.get("to", "")
+            if not from_col or not to_col or from_col == to_col:
+                return
+            cols = list(table._props.get("columns", []))
+            names = [c["name"] for c in cols]
+            if from_col not in names or to_col not in names:
+                return
+            from_idx = names.index(from_col)
+            to_idx = names.index(to_col)
+            col = cols.pop(from_idx)
+            cols.insert(to_idx, col)
+            table._props["columns"] = cols
+            table.update()
+            # Save column order to localStorage
+            new_order = [c["name"] for c in cols]
+            ui.run_javascript(
+                f"localStorage.setItem('{_COL_ORDER_KEY}', {json.dumps(json.dumps(new_order))})"
+            )
+
+        table.on("colreorder", _handle_col_reorder)
+
+        # --- Restore saved column order and sort from localStorage ---
+        async def _restore_table_settings():
+            # Restore column order
+            col_json = await ui.run_javascript(
+                f"return localStorage.getItem('{_COL_ORDER_KEY}')", timeout=2
+            )
+            if col_json:
+                try:
+                    order = json.loads(col_json)
+                    if isinstance(order, list) and order:
+                        col_map = {c["name"]: c for c in table._props.get("columns", [])}
+                        reordered = []
+                        for name in order:
+                            if name in col_map:
+                                reordered.append(col_map.pop(name))
+                        reordered.extend(col_map.values())
+                        if reordered:
+                            table._props["columns"] = reordered
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Restore sort/pagination settings
+            sort_json = await ui.run_javascript(
+                f"return localStorage.getItem('{_SORT_KEY}')", timeout=2
+            )
+            if sort_json:
+                try:
+                    sort_data = json.loads(sort_json)
+                    if isinstance(sort_data, dict):
+                        current_pag = dict(table._props.get("pagination", {}))
+                        current_pag.update(sort_data)
+                        table._props["pagination"] = current_pag
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Restore visible columns
+            vis_json = await ui.run_javascript(
+                f"return localStorage.getItem('{_VIS_COLS_KEY}')", timeout=2
+            )
+            if vis_json:
+                try:
+                    saved_cols = json.loads(vis_json)
+                    if isinstance(saved_cols, list):
+                        # Only keep names that are valid toggleable columns
+                        valid = [c for c in saved_cols if c in _TOGGLEABLE_COLS]
+                        visible_cols.clear()
+                        visible_cols.extend(valid)
+                        # Update checkbox states
+                        for cb_name, cb_ref in _col_checkboxes.items():
+                            cb_ref.value = cb_name in visible_cols
+                        # Update table prop
+                        cols_to_show = list(_ALWAYS_VISIBLE) + visible_cols
+                        table._props["visible-columns"] = cols_to_show
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            table.update()
+
+        ui.timer(0.3, _restore_table_settings, once=True)
+
+
+def _prepare_rows(competitors: list[dict], trend_data: dict | None = None) -> list[dict]:
     rows = []
+    comp_trends = (trend_data or {}).get("competitor_trends", {})
     for c in competitors:
         price = c.get("price")
         score = c.get("match_score")
@@ -724,6 +1006,9 @@ def _prepare_rows(competitors: list[dict]) -> list[dict]:
             "thumbnail_url": c.get("thumbnail_url", ""),
             "reviewed": "Yes" if reviewed else "",
             "reviewed_raw": bool(reviewed),
+            "trend_status": comp_trends.get(c.get("asin", ""), {}).get("status", "stable"),
+            "trend_price_delta": comp_trends.get(c.get("asin", ""), {}).get("price_delta"),
+            "trend_rating_delta": comp_trends.get(c.get("asin", ""), {}).get("rating_delta"),
         })
     return rows
 

@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  verlumen:
+    build: .
+    container_name: verlumen-research
+    ports:
+      - "8080:8080"
+    environment:
+      - SERPAPI_KEY=${SERPAPI_KEY:-}
+      - SP_API_REFRESH_TOKEN=${SP_API_REFRESH_TOKEN:-}
+      - SP_API_LWA_APP_ID=${SP_API_LWA_APP_ID:-}
+      - SP_API_LWA_CLIENT_SECRET=${SP_API_LWA_CLIENT_SECRET:-}
+      - SP_API_AWS_ACCESS_KEY=${SP_API_AWS_ACCESS_KEY:-}
+      - SP_API_AWS_SECRET_KEY=${SP_API_AWS_SECRET_KEY:-}
+      - SP_API_ROLE_ARN=${SP_API_ROLE_ARN:-}
+      - APP_HOST=0.0.0.0
+    volumes:
+      - verlumen-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  verlumen-data:
+    driver: local

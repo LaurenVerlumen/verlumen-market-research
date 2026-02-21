@@ -1,4 +1,4 @@
-"""Export page - download enriched research data as Excel."""
+"""Export page - download enriched research data as Excel or PDF."""
 from datetime import datetime
 
 from nicegui import ui, app
@@ -7,7 +7,7 @@ from sqlalchemy.orm import joinedload
 
 from config import EXPORTS_DIR
 from src.models import get_session, Product, Category, SearchSession, AmazonCompetitor
-from src.services import ExcelExporter, CompetitionAnalyzer
+from src.services import ExcelExporter, CompetitionAnalyzer, export_pdf
 from src.ui.layout import build_layout
 
 
@@ -125,17 +125,8 @@ def export_page():
 
         result_container = ui.column().classes("w-full")
 
-        async def do_export():
-            filename = filename_input.value.strip()
-            if not filename.endswith(".xlsx"):
-                filename += ".xlsx"
-
-            output_path = EXPORTS_DIR / filename
-            result_container.clear()
-
-            do_ml = include_ml_cb.value
-            do_profit = include_profit_cb.value
-
+        def _load_products_data(do_ml: bool, do_profit: bool) -> list[dict]:
+            """Load product data applying current filters. Returns products_data list."""
             session = get_session()
             try:
                 query = (
@@ -260,10 +251,29 @@ def export_page():
 
                     products_data.append(entry)
 
+                return products_data
+            finally:
+                session.close()
+
+        async def do_export():
+            filename = filename_input.value.strip()
+            if not filename.endswith(".xlsx"):
+                filename += ".xlsx"
+
+            output_path = EXPORTS_DIR / filename
+            result_container.clear()
+
+            try:
+                products_data = _load_products_data(
+                    do_ml=include_ml_cb.value,
+                    do_profit=include_profit_cb.value,
+                )
+
                 exporter = ExcelExporter()
                 saved_path = exporter.export(
                     products_data, str(output_path),
-                    include_ml=do_ml, include_profit=do_profit,
+                    include_ml=include_ml_cb.value,
+                    include_profit=include_profit_cb.value,
                 )
 
                 with result_container:
@@ -278,19 +288,47 @@ def export_page():
                 with result_container:
                     ui.label(f"Export failed: {e}").classes("text-negative mt-2")
                 ui.notify(f"Export failed: {e}", type="negative")
-            finally:
-                session.close()
 
-        ui.button("Export to Excel", icon="download", on_click=do_export).props(
-            "color=positive size=lg"
-        ).classes("mt-4")
+        async def do_pdf_export():
+            pdf_filename = f"verlumen-report-{datetime.now().strftime('%Y%m%d-%H%M')}.pdf"
+            output_path = EXPORTS_DIR / pdf_filename
+            result_container.clear()
+
+            try:
+                products_data = _load_products_data(
+                    do_ml=include_ml_cb.value,
+                    do_profit=include_profit_cb.value,
+                )
+
+                saved_path = export_pdf(products_data, str(output_path))
+
+                with result_container:
+                    ui.label(f"PDF exported to: {saved_path}").classes("text-body2 text-positive mt-2")
+
+                ui.notify(f"PDF saved: {pdf_filename}", type="positive")
+
+                app.add_static_file(local_file=str(output_path), url_path=f"/exports/{pdf_filename}")
+                ui.download(f"/exports/{pdf_filename}")
+
+            except Exception as e:
+                with result_container:
+                    ui.label(f"PDF export failed: {e}").classes("text-negative mt-2")
+                ui.notify(f"PDF export failed: {e}", type="negative")
+
+        with ui.row().classes("gap-4 mt-4"):
+            ui.button("Export to Excel", icon="download", on_click=do_export).props(
+                "color=positive size=lg"
+            )
+            ui.button("Export to PDF", icon="picture_as_pdf", on_click=do_pdf_export).props(
+                "color=accent size=lg"
+            )
 
         # Previous exports
         ui.separator().classes("my-4")
         ui.label("Previous Exports").classes("text-subtitle1 font-bold mb-2")
 
         exports = sorted(
-            EXPORTS_DIR.glob("*.xlsx"),
+            list(EXPORTS_DIR.glob("*.xlsx")) + list(EXPORTS_DIR.glob("*.pdf")),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

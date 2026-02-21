@@ -37,6 +37,18 @@ SP_API_ROLE_ARN = os.getenv("SP_API_ROLE_ARN", "")
 AMAZON_DOMAIN = "amazon.com"
 AMAZON_MARKETPLACE = "US"
 
+# Supported Amazon marketplaces for research
+AMAZON_MARKETPLACES = {
+    "amazon.com": {"label": "US (amazon.com)", "currency": "USD", "flag": "\U0001f1fa\U0001f1f8"},
+    "amazon.co.uk": {"label": "UK (amazon.co.uk)", "currency": "GBP", "flag": "\U0001f1ec\U0001f1e7"},
+    "amazon.de": {"label": "Germany (amazon.de)", "currency": "EUR", "flag": "\U0001f1e9\U0001f1ea"},
+    "amazon.ca": {"label": "Canada (amazon.ca)", "currency": "CAD", "flag": "\U0001f1e8\U0001f1e6"},
+    "amazon.co.jp": {"label": "Japan (amazon.co.jp)", "currency": "JPY", "flag": "\U0001f1ef\U0001f1f5"},
+    "amazon.es": {"label": "Spain (amazon.es)", "currency": "EUR", "flag": "\U0001f1ea\U0001f1f8"},
+    "amazon.fr": {"label": "France (amazon.fr)", "currency": "EUR", "flag": "\U0001f1eb\U0001f1f7"},
+    "amazon.it": {"label": "Italy (amazon.it)", "currency": "EUR", "flag": "\U0001f1ee\U0001f1f9"},
+}
+
 # Amazon department mapping: category name (case-insensitive) → SerpAPI amazon_department
 # "aps" means "All Departments" (no filter)
 _DEFAULT_DEPARTMENT_MAP: dict[str, str] = {
@@ -113,3 +125,4 @@ AMAZON_DEPARTMENTS: dict[str, str] = {
 # App settings
 APP_TITLE = "Verlumen Market Research"
 APP_PORT = 8080
+APP_HOST = os.getenv("APP_HOST", "0.0.0.0")

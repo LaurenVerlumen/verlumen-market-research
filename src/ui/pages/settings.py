@@ -354,7 +354,10 @@ def settings_page():
             category_container = ui.column().classes("w-full")
 
             def refresh_categories():
-                """Reload the category list from the database."""
+                """Reload the category list from the database and update sidebar nav."""
+                from src.ui.layout import refresh_nav_categories
+                refresh_nav_categories()
+                _refresh_dept_mapping()
                 category_container.clear()
                 session = get_session()
                 try:
@@ -419,6 +422,122 @@ def settings_page():
                     session.close()
 
             refresh_categories()
+
+        # Scheduled Research
+        with ui.card().classes("w-full p-4 mb-4"):
+            ui.label("Scheduled Research").classes("text-subtitle1 font-bold mb-2")
+            ui.label(
+                "Automatically research products on a schedule. "
+                "The scheduler runs in the background and researches all products "
+                "with status 'imported' or 'researched'."
+            ).classes("text-body2 text-secondary mb-3")
+
+            from src.services.scheduler import (
+                load_config as load_schedule_config,
+                save_config as save_schedule_config,
+                restart_scheduler,
+                run_now as scheduler_run_now,
+                get_scheduler_status,
+            )
+
+            sched_status = get_scheduler_status()
+
+            # Status display
+            sched_status_container = ui.column().classes("w-full mb-3")
+
+            def _refresh_sched_status():
+                sched_status_container.clear()
+                status = get_scheduler_status()
+                with sched_status_container:
+                    with ui.row().classes("gap-6 items-center"):
+                        if status["running"]:
+                            ui.icon("schedule").classes("text-positive")
+                            ui.label("Scheduler is running").classes("text-body2 text-positive")
+                        else:
+                            ui.icon("schedule").classes("text-grey-5")
+                            ui.label("Scheduler is stopped").classes("text-body2 text-secondary")
+
+                    with ui.row().classes("gap-6 mt-1"):
+                        if status["last_run"]:
+                            ui.label(f"Last run: {status['last_run']}").classes(
+                                "text-caption text-secondary"
+                            )
+                            ui.label(
+                                f"Products researched: {status['products_researched']}"
+                            ).classes("text-caption text-secondary")
+                        else:
+                            ui.label("Never run").classes("text-caption text-secondary")
+
+            _refresh_sched_status()
+
+            # Configuration controls
+            sched_cfg = load_schedule_config()
+
+            enabled_switch = ui.switch(
+                "Enable scheduled research",
+                value=sched_cfg.get("enabled", False),
+            )
+
+            with ui.row().classes("gap-4 items-end w-full mt-2"):
+                freq_select = ui.select(
+                    label="Frequency",
+                    options=["daily", "weekly", "monthly"],
+                    value=sched_cfg.get("frequency", "weekly"),
+                ).classes("w-40")
+
+                hour_select = ui.select(
+                    label="Hour (0-23)",
+                    options={h: f"{h:02d}:00" for h in range(24)},
+                    value=sched_cfg.get("hour", 2),
+                ).classes("w-32")
+
+                dow_options = {
+                    "mon": "Monday",
+                    "tue": "Tuesday",
+                    "wed": "Wednesday",
+                    "thu": "Thursday",
+                    "fri": "Friday",
+                    "sat": "Saturday",
+                    "sun": "Sunday",
+                }
+                dow_select = ui.select(
+                    label="Day of week",
+                    options=dow_options,
+                    value=sched_cfg.get("day_of_week", "mon"),
+                ).classes("w-40")
+
+            # Show/hide day-of-week based on frequency
+            def _update_dow_visibility():
+                dow_select.visible = freq_select.value == "weekly"
+
+            freq_select.on("update:model-value", lambda _: _update_dow_visibility())
+            _update_dow_visibility()
+
+            def _save_schedule():
+                cfg = load_schedule_config()
+                cfg["enabled"] = enabled_switch.value
+                cfg["frequency"] = freq_select.value
+                cfg["hour"] = hour_select.value
+                cfg["day_of_week"] = dow_select.value
+                save_schedule_config(cfg)
+                restart_scheduler()
+                _refresh_sched_status()
+                ui.notify("Schedule saved and scheduler restarted.", type="positive")
+
+            async def _run_now():
+                ui.notify("Starting research run...", type="info")
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, scheduler_run_now)
+                _refresh_sched_status()
+                ui.notify("Research run complete!", type="positive")
+
+            with ui.row().classes("gap-2 mt-3"):
+                ui.button(
+                    "Save Schedule", icon="save", on_click=_save_schedule,
+                ).props("color=primary")
+                ui.button(
+                    "Run Now", icon="play_arrow", on_click=_run_now,
+                ).props("outlined color=primary")
 
         # About
         with ui.card().classes("w-full p-4"):
@@ -537,20 +656,22 @@ def _build_category_row(cat_id: int, cat_name: str, product_count: int, on_refre
                 session.close()
 
         if product_count == 0:
+            def _confirm_delete():
+                with ui.dialog() as dlg, ui.card():
+                    ui.label(f"Delete '{cat_name}'?").classes("text-subtitle2 font-bold")
+                    ui.label("This category has no products and can be safely removed.").classes(
+                        "text-body2 text-secondary"
+                    )
+                    with ui.row().classes("justify-end gap-2 mt-3"):
+                        ui.button("Cancel", on_click=dlg.close).props("flat")
+                        def _do_delete():
+                            delete_category()
+                            dlg.close()
+                        ui.button("Delete", on_click=_do_delete).props("color=negative")
+                dlg.open()
+
             delete_btn = ui.button(
-                icon="delete",
-                on_click=lambda: ui.notify(
-                    f"Delete '{cat_name}'?",
-                    type="warning",
-                    actions=[
-                        {
-                            "label": "Confirm",
-                            "color": "negative",
-                            "handler": delete_category,
-                        },
-                        {"label": "Cancel", "color": "white"},
-                    ],
-                ),
+                icon="delete", on_click=_confirm_delete,
             ).props("flat dense color=negative")
         else:
             delete_btn = ui.button(icon="delete").props(

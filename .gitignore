@@ -4,10 +4,12 @@ __pycache__/
 .env
 venv/
 data/verlumen.db
-data/exports/*.xlsx
+data/exports/
 data/images/
+data/schedule_config.json
 *.egg-info/
 .vscode/
 .idea/
+.claude/
 *.swp
 *.swo
