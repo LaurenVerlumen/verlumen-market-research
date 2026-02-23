@@ -5,6 +5,7 @@ from src.models.product import Product
 from src.models.search_session import SearchSession
 from src.models.amazon_competitor import AmazonCompetitor
 from src.models.search_cache_model import SearchCacheEntry
+from src.models.review_analysis import ReviewAnalysis
 
 __all__ = [
     "Base",
@@ -17,4 +18,5 @@ __all__ = [
     "SearchSession",
     "AmazonCompetitor",
     "SearchCacheEntry",
+    "ReviewAnalysis",
 ]

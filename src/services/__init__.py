@@ -19,6 +19,9 @@ from src.services.brand_moat import classify_seller, compute_brand_concentration
 from src.services.gtm_brief_generator import generate_gtm_brief
 from src.services.market_events import detect_events, get_all_recent_events
 from src.services.xray_importer import XrayImporter
+from src.services.review_miner import mine_reviews, get_review_analysis
+from src.services.season_forecaster import get_seasonal_data, forecast_demand
+from src.services.keyword_intel import extract_keywords, generate_ppc_campaign
 
 __all__ = [
     "parse_alibaba_url",
@@ -47,4 +50,10 @@ __all__ = [
     "generate_gtm_brief",
     "get_all_recent_events",
     "XrayImporter",
+    "mine_reviews",
+    "get_review_analysis",
+    "get_seasonal_data",
+    "forecast_demand",
+    "extract_keywords",
+    "generate_ppc_campaign",
 ]

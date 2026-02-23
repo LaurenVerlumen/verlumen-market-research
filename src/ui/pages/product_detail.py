@@ -27,6 +27,7 @@ from src.services.viability_scorer import calculate_vvs
 from src.services.brand_moat import compute_brand_concentration
 from src.services.gtm_brief_generator import generate_gtm_brief
 from src.services.trend_tracker import compute_trends
+from src.services.review_miner import mine_reviews, get_review_analysis
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
@@ -193,6 +194,7 @@ def product_detail_page(product_id: int):
                 overview_tab = ui.tab("Overview", icon="info")
                 competitors_tab = ui.tab("Competitors", icon="groups")
                 analysis_tab = ui.tab("Analysis", icon="analytics")
+                reviews_tab = ui.tab("Reviews", icon="rate_review")
                 history_tab = ui.tab("History", icon="history")
 
             with ui.tab_panels(tabs, value=competitors_tab).classes("w-full"):
@@ -221,6 +223,12 @@ def product_detail_page(product_id: int):
                 # ============================================================
                 with ui.tab_panel(analysis_tab):
                     _render_analysis_tab(product, latest_session)
+
+                # ============================================================
+                # REVIEWS TAB
+                # ============================================================
+                with ui.tab_panel(reviews_tab):
+                    _render_reviews_tab(product, product_id, latest_session)
 
                 # ============================================================
                 # HISTORY TAB
@@ -494,6 +502,9 @@ def _render_overview_tab(product, product_id, session,
 
     # --- AI Go-to-Market Brief ---
     _render_ai_brief_section(product, product_id)
+
+    # --- Seasonal Demand Forecast ---
+    _render_seasonal_forecast(product, product_id)
 
     # --- Decision Log ---
     _decision_log_entries = json.loads(product.decision_log or "[]")
@@ -1510,6 +1521,10 @@ def _render_analysis_tab(product, latest_session):
 
         # --- AI Insights card ---
         _render_ai_insights(product, comps if comps else [])
+
+        # --- PPC Keyword Intelligence ---
+        if comps:
+            _render_ppc_keywords(product, product.id, comp_data)
     finally:
         db.close()
 
@@ -2256,3 +2271,487 @@ def _info_row(label: str, value: str, is_link: bool = False):
         ui.link(display, value, new_tab=True).classes("text-primary text-body2")
     else:
         ui.label(value).classes("text-body2")
+
+
+# ====================================================================
+# Reviews Tab
+# ====================================================================
+
+def _render_reviews_tab(product, product_id, latest_session):
+    """Render the Reviews / Pain Map tab."""
+    if not latest_session:
+        with ui.card().classes("w-full p-8 text-center"):
+            ui.icon("science", size="xl").classes("text-grey-5 mb-4")
+            ui.label("Run Amazon Research first").classes("text-h6 text-grey-5")
+            ui.label("Reviews mining requires competitor data from a search session.").classes(
+                "text-body2 text-grey"
+            )
+        return
+
+    results_container = ui.column().classes("w-full gap-4")
+
+    # Check for existing analysis
+    existing = get_review_analysis(product_id)
+    if existing:
+        _render_review_results(results_container, existing)
+
+    async def on_mine():
+        btn.set_visibility(False)
+        spinner.set_visibility(True)
+        status_label.set_text("Mining competitor reviews via SerpAPI...")
+        status_label.set_visibility(True)
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(None, mine_reviews, product_id)
+            spinner.set_visibility(False)
+            if result["errors"]:
+                for err in result["errors"]:
+                    ui.notify(err, type="warning")
+            if result["mined_count"] == 0:
+                status_label.set_text("No review data could be mined.")
+                btn.set_visibility(True)
+                return
+            status_label.set_text(
+                f"Mined reviews from {result['mined_count']} competitors, "
+                f"{len(result['aspects'])} aspects found."
+            )
+            # Re-fetch stored data and render
+            analysis = get_review_analysis(product_id)
+            if analysis:
+                results_container.clear()
+                _render_review_results(results_container, analysis)
+        except Exception as exc:
+            spinner.set_visibility(False)
+            status_label.set_text(f"Error: {exc}")
+            btn.set_visibility(True)
+
+    with ui.row().classes("w-full items-center gap-4"):
+        btn = ui.button("Mine Reviews", icon="psychology", on_click=on_mine).props("color=deep-purple")
+        spinner = ui.spinner("dots", size="lg")
+        spinner.set_visibility(False)
+        status_label = ui.label("")
+        status_label.set_visibility(False)
+
+
+def _render_review_results(container, analysis: dict):
+    """Render review analysis results into the given container."""
+    aspects = analysis.get("aggregated_aspects", [])
+    synthesis_json = analysis.get("product_synthesis")
+    competitors = analysis.get("competitors", [])
+
+    with container:
+        # --- Heatmap Chart ---
+        if aspects:
+            _render_heatmap(aspects[:12])
+
+        # --- AI Synthesis ---
+        if synthesis_json:
+            try:
+                synthesis = json.loads(synthesis_json) if isinstance(synthesis_json, str) else synthesis_json
+            except (json.JSONDecodeError, TypeError):
+                synthesis = None
+
+            if synthesis:
+                _render_synthesis(synthesis)
+
+        # --- Per-Competitor Accordion ---
+        if competitors:
+            ui.label("Per-Competitor Breakdown").classes("text-h6 font-medium mt-4")
+            for comp in competitors:
+                with ui.expansion(
+                    f"{comp.get('title', 'Unknown')[:60]} ({comp.get('asin', '?')})",
+                    icon="storefront",
+                ).classes("w-full"):
+                    with ui.row().classes("gap-4 mb-2"):
+                        if comp.get("rating"):
+                            ui.badge(f"Rating: {comp['rating']}", color="amber").props("outline")
+                        if comp.get("total_reviews"):
+                            ui.badge(f"{comp['total_reviews']} reviews", color="blue").props("outline")
+                    comp_aspects = comp.get("aspects", [])
+                    if comp_aspects:
+                        for asp in comp_aspects:
+                            with ui.row().classes("w-full items-start gap-2 py-1"):
+                                ui.label(asp.get("title", "")).classes("font-medium text-body2")
+                                pos = asp.get("mentions_positive", 0)
+                                neg = asp.get("mentions_negative", 0)
+                                total = asp.get("mentions_total", 0)
+                                ui.badge(f"+{pos}", color="green").props("dense")
+                                ui.badge(f"-{neg}", color="red").props("dense")
+                                ui.badge(f"={total}", color="grey").props("dense")
+                            if asp.get("examples"):
+                                for ex in asp["examples"][:2]:
+                                    ui.label(f'"{ex}"').classes(
+                                        "text-caption text-grey-7 pl-4 italic"
+                                    )
+                    else:
+                        ui.label("No review aspects found.").classes("text-body2 text-grey")
+
+
+def _render_heatmap(aspects: list):
+    """Render an ECharts heatmap of review aspects by sentiment."""
+    y_labels = [a["title"] for a in aspects]
+    x_labels = ["Positive", "Neutral", "Negative"]
+
+    data = []
+    for y_idx, asp in enumerate(aspects):
+        pos = asp.get("mentions_positive", 0)
+        neg = asp.get("mentions_negative", 0)
+        total = asp.get("mentions_total", 0)
+        neutral = max(0, total - pos - neg)
+        data.append([0, y_idx, pos])
+        data.append([1, y_idx, neutral])
+        data.append([2, y_idx, neg])
+
+    max_val = max((d[2] for d in data), default=1) or 1
+
+    ui.echart({
+        "tooltip": {"position": "top"},
+        "grid": {"left": "20%", "right": "10%", "top": "5%", "bottom": "15%"},
+        "xAxis": {"type": "category", "data": x_labels, "splitArea": {"show": True}},
+        "yAxis": {"type": "category", "data": y_labels, "splitArea": {"show": True}},
+        "visualMap": {
+            "min": 0,
+            "max": int(max_val),
+            "calculable": True,
+            "orient": "horizontal",
+            "left": "center",
+            "bottom": "0%",
+            "inRange": {
+                "color": ["#f5f5f5", "#c8e6c9", "#a5d6a7", "#66bb6a",
+                           "#ffcc80", "#ef9a9a", "#e57373", "#ef5350"],
+            },
+        },
+        "series": [{
+            "name": "Mentions",
+            "type": "heatmap",
+            "data": data,
+            "label": {"show": True},
+            "emphasis": {"itemStyle": {"shadowBlur": 10, "shadowColor": "rgba(0,0,0,0.5)"}},
+        }],
+    }).classes("w-full").style("height: 300px")
+
+
+def _render_synthesis(synthesis: dict):
+    """Render the AI synthesis section."""
+    with ui.card().classes("w-full p-4 mt-4"):
+        ui.label("AI Review Synthesis").classes("text-h6 font-medium mb-2")
+
+        # Summary
+        if synthesis.get("summary"):
+            with ui.card().classes("w-full bg-blue-1 p-3 mb-3"):
+                ui.label(synthesis["summary"]).classes("text-body1")
+
+        # Top Pain Points
+        pain_points = synthesis.get("top_pain_points", [])
+        if pain_points:
+            ui.label("Top Pain Points").classes("text-subtitle1 font-medium mb-2")
+            for pp in pain_points:
+                with ui.card().classes("w-full p-3 mb-2"):
+                    with ui.row().classes("items-center gap-2 mb-1"):
+                        ui.label(pp.get("aspect", "")).classes("text-subtitle2 font-bold")
+                        if pp.get("frequency"):
+                            ui.badge(f"{pp['frequency']} mentions", color="orange").props("outline")
+                    if pp.get("insight"):
+                        ui.label(pp["insight"]).classes("text-body2 mb-1")
+                    if pp.get("product_opportunity"):
+                        ui.label(pp["product_opportunity"]).classes(
+                            "text-body2 text-green-8 font-medium"
+                        )
+
+        # Product Recommendations
+        recs = synthesis.get("product_recommendations", [])
+        if recs:
+            ui.label("Product Recommendations").classes("text-subtitle1 font-medium mt-3 mb-2")
+            with ui.column().classes("gap-1"):
+                for rec in recs:
+                    with ui.row().classes("items-start gap-2"):
+                        ui.icon("check_circle", size="sm").classes("text-green-7 mt-1")
+                        ui.label(rec).classes("text-body2")
+
+        # Competitive Advantages
+        advantages = synthesis.get("competitive_advantages", [])
+        if advantages:
+            ui.label("Competitive Advantages").classes("text-subtitle1 font-medium mt-3 mb-2")
+            with ui.row().classes("gap-2 flex-wrap"):
+                for adv in advantages:
+                    ui.badge(adv, color="teal").props("outline")
+
+
+# ====================================================================
+# PPC Keyword Intelligence
+# ====================================================================
+
+def _render_ppc_keywords(product, product_id, comp_data):
+    """Render PPC Keyword Intelligence section in Analysis tab."""
+    with ui.card().classes("w-full p-4 mt-4"):
+        with ui.row().classes("items-center gap-2 mb-3"):
+            ui.icon("campaign").classes("text-primary")
+            ui.label("PPC Keyword Intelligence").classes("text-subtitle1 font-bold")
+
+        ppc_container = ui.column().classes("w-full gap-3")
+
+        with ui.row().classes("items-center gap-2"):
+            ppc_btn = ui.button(
+                "Generate Keywords", icon="auto_awesome",
+            ).props("color=primary outline")
+            ppc_spinner = ui.spinner("dots", size="lg")
+            ppc_spinner.set_visibility(False)
+
+        async def _generate_keywords():
+            ppc_btn.disable()
+            ppc_spinner.set_visibility(True)
+            try:
+                from src.services.keyword_intel import generate_ppc_campaign
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, generate_ppc_campaign, product_id,
+                )
+                ppc_container.clear()
+                with ppc_container:
+                    _render_ppc_content(result, product_id)
+            except Exception as exc:
+                logger.exception("PPC keyword generation failed")
+                ui.notify(f"Keyword generation failed: {exc}", type="negative")
+            finally:
+                ppc_btn.enable()
+                ppc_spinner.set_visibility(False)
+
+        ppc_btn.on_click(_generate_keywords)
+
+
+def _render_ppc_content(result, product_id):
+    """Render the PPC campaign results inside the PPC section."""
+    # Campaign Summary
+    summary = result.get("summary", "")
+    if summary:
+        with ui.card().classes("w-full bg-blue-1 p-3"):
+            ui.label("Campaign Summary").classes("text-subtitle2 font-bold mb-1")
+            ui.label(summary).classes("text-body2")
+            total = result.get("total_keywords", 0)
+            if total:
+                ui.label(f"Total unique keywords: {total}").classes("text-caption text-secondary mt-1")
+
+    # Keyword Frequency Chart
+    kf = result.get("keyword_frequency", [])[:15]
+    if kf:
+        keywords = [k["keyword"] for k in reversed(kf)]
+        counts = [k["count"] for k in reversed(kf)]
+        with ui.card().classes("w-full p-3"):
+            ui.label("Keyword Frequency in Competitor Titles").classes("text-subtitle2 font-bold mb-2")
+            ui.echart({
+                "tooltip": {"trigger": "axis"},
+                "xAxis": {"type": "value"},
+                "yAxis": {"type": "category", "data": keywords},
+                "series": [{"type": "bar", "data": counts, "itemStyle": {"color": "#A08968"}}],
+                "grid": {"left": 150, "right": 20, "bottom": 20, "top": 10},
+            }).classes("w-full").style("height: 400px")
+
+    # Auto Campaign Seeds
+    auto_rows = [
+        {"keyword": k["keyword"], "match": k.get("match_type", "broad"),
+         "relevance": k.get("relevance", ""), "rationale": k.get("rationale", "")}
+        for k in result.get("auto_seeds", [])
+    ]
+    if auto_rows:
+        auto_columns = [
+            {"name": "keyword", "label": "Keyword", "field": "keyword", "align": "left"},
+            {"name": "match", "label": "Match Type", "field": "match", "align": "center"},
+            {"name": "relevance", "label": "Relevance", "field": "relevance", "align": "center"},
+            {"name": "rationale", "label": "Rationale", "field": "rationale", "align": "left"},
+        ]
+        with ui.card().classes("w-full"):
+            ui.label("Auto Campaign Seeds").classes("text-subtitle2 font-bold text-positive")
+            ui.table(columns=auto_columns, rows=auto_rows).classes("w-full")
+
+    # Manual Exact Match
+    manual_rows = [
+        {"keyword": k["keyword"], "match": k.get("match_type", "exact"),
+         "relevance": k.get("relevance", ""), "rationale": k.get("rationale", "")}
+        for k in result.get("manual_exact", [])
+    ]
+    if manual_rows:
+        manual_columns = [
+            {"name": "keyword", "label": "Keyword", "field": "keyword", "align": "left"},
+            {"name": "match", "label": "Match Type", "field": "match", "align": "center"},
+            {"name": "relevance", "label": "Relevance", "field": "relevance", "align": "center"},
+            {"name": "rationale", "label": "Rationale", "field": "rationale", "align": "left"},
+        ]
+        with ui.card().classes("w-full"):
+            ui.label("Manual Exact Match").classes("text-subtitle2 font-bold text-primary")
+            ui.table(columns=manual_columns, rows=manual_rows).classes("w-full")
+
+    # Negative Keywords
+    neg_rows = [
+        {"keyword": k["keyword"], "reason": k.get("reason", "")}
+        for k in result.get("negative_keywords", [])
+    ]
+    if neg_rows:
+        neg_columns = [
+            {"name": "keyword", "label": "Keyword", "field": "keyword", "align": "left"},
+            {"name": "reason", "label": "Reason", "field": "reason", "align": "left"},
+        ]
+        with ui.card().classes("w-full"):
+            ui.label("Negative Keywords").classes("text-subtitle2 font-bold text-negative")
+            ui.table(columns=neg_columns, rows=neg_rows).classes("w-full")
+
+    # Export CSV button
+    def _export_csv():
+        import csv
+        import io
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["Campaign Type", "Keyword", "Match Type", "Relevance", "Rationale/Reason"])
+        for kw in result.get("auto_seeds", []):
+            writer.writerow(["Auto", kw["keyword"], kw.get("match_type", "broad"),
+                             kw.get("relevance", ""), kw.get("rationale", "")])
+        for kw in result.get("manual_exact", []):
+            writer.writerow(["Manual", kw["keyword"], kw.get("match_type", "exact"),
+                             kw.get("relevance", ""), kw.get("rationale", "")])
+        for kw in result.get("negative_keywords", []):
+            writer.writerow(["Negative", kw["keyword"], "negative", "", kw.get("reason", "")])
+        ui.download(output.getvalue().encode(), f"ppc_keywords_{product_id}.csv")
+
+    ui.button("Export CSV", icon="download", on_click=_export_csv).props("color=accent outline")
+
+
+# ---------------------------------------------------------------------------
+# Seasonal Demand Forecast
+# ---------------------------------------------------------------------------
+
+def _render_seasonal_forecast(product, product_id):
+    """Render the Best Launch Window card with seasonal demand forecast."""
+    with ui.expansion(
+        "Best Launch Window", icon="calendar_month",
+    ).classes("w-full").props("dense header-class='text-subtitle1 font-bold'"):
+
+        forecast_container = ui.column().classes("w-full gap-2")
+
+        with ui.row().classes("items-center gap-2"):
+            forecast_btn = ui.button(
+                "Analyze Seasonality", icon="trending_up",
+            ).props("color=primary outline")
+            forecast_spinner = ui.spinner("dots", size="lg")
+            forecast_spinner.set_visibility(False)
+
+        async def _run_forecast():
+            forecast_btn.disable()
+            forecast_spinner.set_visibility(True)
+            try:
+                from src.services.season_forecaster import forecast_demand
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, forecast_demand, product_id,
+                )
+                forecast_container.clear()
+                with forecast_container:
+                    _render_forecast_content(result)
+            except Exception as exc:
+                logger.exception("Seasonal forecast failed")
+                ui.notify(f"Forecast failed: {exc}", type="negative")
+            finally:
+                forecast_btn.enable()
+                forecast_spinner.set_visibility(False)
+
+        forecast_btn.on_click(_run_forecast)
+
+
+def _render_forecast_content(result: dict):
+    """Render the forecast result inside the container."""
+
+    # 1. Trends availability warning
+    if not result["trends_available"]:
+        ui.chip(
+            "Google Trends unavailable -- using BSR history only",
+            icon="warning", color="amber",
+        ).props("outline")
+
+    # 2. Recommendation banner
+    with ui.card().classes("w-full bg-green-1 q-pa-sm"):
+        with ui.row().classes("items-center gap-2 no-wrap"):
+            ui.icon("calendar_month").classes("text-green text-h6")
+            ui.label(result["launch_recommendation"]).classes(
+                "text-body1 font-bold text-green-9"
+            )
+
+    # 3. Seasonality strength badge
+    strength = result["seasonality_strength"]
+    if strength >= 0.5:
+        badge_color, badge_label = "green", "Strong Seasonality"
+    elif strength >= 0.25:
+        badge_color, badge_label = "orange", "Moderate Seasonality"
+    else:
+        badge_color, badge_label = "grey", "Weak Seasonality"
+    ui.badge(f"{badge_label} ({strength:.0%})", color=badge_color).props("outline")
+
+    # 4. 12-Month Demand Forecast chart
+    forecast_12m = result.get("forecast_12m", [])
+    if forecast_12m:
+        ui.label("12-Month Demand Forecast").classes("text-subtitle2 font-medium mt-2")
+        months = [f["month"] for f in forecast_12m]
+        values = [round(f["predicted_index"], 1) for f in forecast_12m]
+
+        ui.echart({
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {
+                "type": "category",
+                "data": months,
+                "axisLabel": {"rotate": 45},
+            },
+            "yAxis": {"type": "value", "name": "Demand Index", "min": 0},
+            "series": [{
+                "type": "line",
+                "data": values,
+                "smooth": True,
+                "areaStyle": {"opacity": 0.15},
+                "lineStyle": {"width": 3},
+                "itemStyle": {"color": "#A08968"},
+                "markLine": {
+                    "data": [{"type": "average", "name": "Avg"}],
+                    "lineStyle": {"type": "dashed"},
+                },
+            }],
+            "grid": {"left": 50, "right": 20, "bottom": 60, "top": 30},
+        }).classes("w-full").style("height: 300px")
+
+    # 5. Monthly Demand Index table
+    mdi = result.get("monthly_demand_index", [])
+    if mdi:
+        ui.label("Monthly Demand Index").classes("text-subtitle2 font-medium mt-2")
+        columns = [
+            {"name": "month", "label": "Month", "field": "month", "align": "left"},
+            {"name": "index", "label": "Index", "field": "index", "align": "right"},
+            {"name": "peak", "label": "Peak", "field": "peak", "align": "center"},
+        ]
+        rows = [
+            {
+                "month": e["month"],
+                "index": e["index"],
+                "peak": "Yes" if e["is_peak"] else "",
+            }
+            for e in mdi
+        ]
+        ui.table(columns=columns, rows=rows).classes("w-full").props(
+            "dense flat bordered"
+        )
+
+    # 6. BSR History mini-chart
+    bsr = result.get("bsr_history", [])
+    if bsr:
+        ui.label("BSR History").classes("text-subtitle2 font-medium mt-2")
+        bsr_dates = [b["date"] for b in bsr]
+        bsr_vals = [b["avg_bsr"] for b in bsr]
+
+        ui.echart({
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {
+                "type": "category",
+                "data": bsr_dates,
+                "axisLabel": {"rotate": 45},
+            },
+            "yAxis": {"type": "value", "name": "Avg BSR", "inverse": True},
+            "series": [{
+                "type": "line",
+                "data": bsr_vals,
+                "smooth": True,
+                "lineStyle": {"width": 2, "color": "#5470C6"},
+                "itemStyle": {"color": "#5470C6"},
+            }],
+            "grid": {"left": 60, "right": 20, "bottom": 60, "top": 30},
+        }).classes("w-full").style("height: 200px")

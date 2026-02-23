@@ -36,6 +36,10 @@ SP_API_AWS_ACCESS_KEY = os.getenv("SP_API_AWS_ACCESS_KEY", "")
 SP_API_AWS_SECRET_KEY = os.getenv("SP_API_AWS_SECRET_KEY", "")
 SP_API_ROLE_ARN = os.getenv("SP_API_ROLE_ARN", "")
 
+# DataForSEO (optional - for enhanced keyword data)
+DATAFORSEO_LOGIN = os.getenv("DATAFORSEO_LOGIN", "")
+DATAFORSEO_PASSWORD = os.getenv("DATAFORSEO_PASSWORD", "")
+
 # Amazon settings
 AMAZON_DOMAIN = "amazon.com"
 AMAZON_MARKETPLACE = "US"

@@ -317,6 +317,7 @@ def init_db():
     import src.models.search_session  # noqa: F401
     import src.models.amazon_competitor  # noqa: F401
     import src.models.search_cache_model  # noqa: F401
+    import src.models.review_analysis  # noqa: F401
 
     # Migrate categories table to hierarchical schema BEFORE create_all
     _migrate_categories_hierarchy()
