@@ -7,7 +7,7 @@ from datetime import datetime
 
 from nicegui import ui
 
-from config import SERPAPI_KEY, SP_API_REFRESH_TOKEN, AMAZON_MARKETPLACES
+from config import SERPAPI_KEY, SP_API_REFRESH_TOKEN, AMAZON_MARKETPLACES, ANTHROPIC_API_KEY
 from src.models import get_session, Product, AmazonCompetitor, SearchSession
 from src.models.category import Category
 from src.services import (
@@ -24,6 +24,8 @@ from src.ui.components.helpers import (
     format_price as _format_price, STATUS_COLORS as _STATUS_COLORS, STATUS_LABELS as _STATUS_LABELS,
 )
 from src.services.viability_scorer import calculate_vvs
+from src.services.brand_moat import compute_brand_concentration
+from src.services.gtm_brief_generator import generate_gtm_brief
 from src.services.trend_tracker import compute_trends
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
@@ -490,6 +492,9 @@ def _render_overview_tab(product, product_id, session,
                             "View on Alibaba", icon="open_in_new",
                         ).props("color=accent")
 
+    # --- AI Go-to-Market Brief ---
+    _render_ai_brief_section(product, product_id)
+
     # --- Decision Log ---
     _decision_log_entries = json.loads(product.decision_log or "[]")
 
@@ -577,6 +582,165 @@ def _render_overview_tab(product, product_id, session,
                             except (ValueError, TypeError):
                                 formatted = e_date
                             ui.label(formatted).classes("text-caption text-grey-6")
+
+
+def _render_ai_brief_section(product, product_id):
+    """Render a collapsible AI Go-to-Market Brief section."""
+    with ui.expansion(
+        "AI Go-to-Market Brief", icon="auto_awesome",
+    ).classes("w-full").props("dense header-class='text-subtitle1 font-bold'"):
+
+        if not ANTHROPIC_API_KEY:
+            ui.label(
+                "Configure Anthropic API key in Settings to enable AI briefs."
+            ).classes("text-body2 text-secondary italic")
+            return
+
+        brief_container = ui.column().classes("w-full gap-2")
+        brief_btn = ui.button(
+            "Generate AI Brief", icon="auto_awesome",
+        ).props("color=primary outline")
+        brief_spinner = ui.spinner("dots", size="lg").classes("hidden")
+
+        async def _generate_brief():
+            brief_btn.disable()
+            brief_spinner.classes(remove="hidden")
+
+            try:
+                # Gather data from the database
+                db = get_session()
+                try:
+                    p = db.query(Product).filter(Product.id == product_id).first()
+                    if not p:
+                        ui.notify("Product not found.", type="negative")
+                        return
+
+                    # Get latest session's competitors
+                    latest = (
+                        db.query(SearchSession)
+                        .filter(SearchSession.product_id == product_id)
+                        .order_by(SearchSession.created_at.desc())
+                        .first()
+                    )
+                    competitors = []
+                    if latest:
+                        comps = (
+                            db.query(AmazonCompetitor)
+                            .filter(AmazonCompetitor.session_id == latest.id)
+                            .all()
+                        )
+                        competitors = [
+                            {
+                                "price": c.price,
+                                "rating": c.rating,
+                                "review_count": c.review_count,
+                                "bought_last_month": c.bought_last_month,
+                                "badge": c.badge,
+                                "is_prime": c.is_prime,
+                                "is_sponsored": c.is_sponsored,
+                                "position": c.position,
+                                "title": c.title,
+                                "asin": c.asin,
+                            }
+                            for c in comps
+                        ]
+
+                    # Compute scoring data
+                    alibaba_cost = p.alibaba_price_min
+                    vvs = calculate_vvs(p, competitors, alibaba_cost)
+
+                    from src.services.price_recommender import recommend_pricing
+                    from src.services.demand_estimator import estimate_demand
+                    pricing = recommend_pricing(competitors, alibaba_cost)
+                    demand = estimate_demand(competitors)
+
+                    prices = [c["price"] for c in competitors if c.get("price") and c["price"] > 0]
+                    ratings = [c["rating"] for c in competitors if c.get("rating") is not None]
+
+                    product_data = {
+                        "name": p.name,
+                        "category": p.category.name if p.category else "N/A",
+                        "vvs": vvs,
+                        "pricing": pricing,
+                        "demand": demand,
+                        "competitor_count": len(competitors),
+                        "avg_price": _stats.mean(prices) if prices else None,
+                        "avg_rating": _stats.mean(ratings) if ratings else None,
+                        "alibaba_cost": alibaba_cost,
+                    }
+                finally:
+                    db.close()
+
+                # Call the AI service in executor to avoid blocking
+                brief = await asyncio.get_event_loop().run_in_executor(
+                    None, generate_gtm_brief, product_data,
+                )
+
+                # Render the brief
+                brief_container.clear()
+                with brief_container:
+                    _render_brief_content(brief)
+
+            except RuntimeError as exc:
+                ui.notify(str(exc), type="negative")
+            except Exception as exc:
+                logger.exception("GTM brief generation failed")
+                ui.notify(f"Brief generation failed: {exc}", type="negative")
+            finally:
+                brief_btn.enable()
+                brief_spinner.classes(add="hidden")
+
+        brief_btn.on_click(_generate_brief)
+
+
+def _render_brief_content(brief: dict):
+    """Render the structured GTM brief output."""
+    # Market Summary
+    if brief.get("market_summary"):
+        with ui.card().classes("w-full bg-blue-50 p-3"):
+            ui.label("Market Summary").classes("text-subtitle2 font-bold text-blue-9")
+            ui.label(brief["market_summary"]).classes("text-body2")
+
+    # Launch Price + Rationale
+    with ui.row().classes("w-full gap-4 items-start"):
+        if brief.get("launch_price"):
+            with ui.card().classes("p-3 bg-green-50").style("min-width: 160px"):
+                ui.label("Launch Price").classes("text-caption text-green-9 font-medium")
+                ui.label(f"${brief['launch_price']:.2f}").classes(
+                    "text-h5 font-bold text-green-10"
+                )
+        if brief.get("rationale"):
+            with ui.card().classes("flex-1 p-3 bg-grey-50"):
+                ui.label("Rationale").classes("text-caption text-grey-8 font-medium")
+                ui.label(brief["rationale"]).classes("text-body2")
+
+    # Headline Angles
+    if brief.get("headline_angles"):
+        with ui.card().classes("w-full p-3"):
+            ui.label("Headline Angles").classes("text-subtitle2 font-bold")
+            for angle in brief["headline_angles"]:
+                with ui.row().classes("items-start gap-2"):
+                    ui.icon("lightbulb", color="amber").style("font-size: 18px; margin-top: 2px")
+                    ui.label(angle).classes("text-body2")
+
+    with ui.row().classes("w-full gap-4 items-start"):
+        # Risk Flags
+        if brief.get("risk_flags"):
+            with ui.card().classes("flex-1 p-3 bg-red-50"):
+                ui.label("Risk Flags").classes("text-subtitle2 font-bold text-red-9")
+                for risk in brief["risk_flags"]:
+                    with ui.row().classes("items-start gap-2"):
+                        ui.icon("warning", color="red").style("font-size: 18px; margin-top: 2px")
+                        ui.label(risk).classes("text-body2")
+
+        # 90-Day Milestones
+        if brief.get("milestones_90day"):
+            with ui.card().classes("flex-1 p-3 bg-purple-50"):
+                ui.label("90-Day Milestones").classes("text-subtitle2 font-bold text-purple-9")
+                for i, milestone in enumerate(brief["milestones_90day"], 1):
+                    with ui.row().classes("items-start gap-2"):
+                        ui.badge(str(i), color="purple").props("rounded")
+                        ui.label(milestone).classes("text-body2")
 
 
 def _render_competitors_tab(product, product_id, session, latest_session,
@@ -1307,6 +1471,9 @@ def _render_analysis_tab(product, latest_session):
                     "badge": c.badge, "is_prime": c.is_prime,
                     "is_sponsored": c.is_sponsored,
                     "position": c.position,
+                    "brand": c.brand, "manufacturer": c.manufacturer,
+                    "seller": c.seller, "seller_country": c.seller_country,
+                    "monthly_revenue": c.monthly_revenue,
                 }
                 for c in comps
             ]
@@ -1327,10 +1494,16 @@ def _render_analysis_tab(product, latest_session):
                     "match_score": c.match_score,
                     "monthly_sales": c.monthly_sales,
                     "monthly_revenue": c.monthly_revenue,
+                    "manufacturer": c.manufacturer,
+                    "seller": c.seller, "seller_country": c.seller_country,
                 }
                 for c in comps
             ]
             _render_brand_landscape(comp_data)
+
+        # --- Brand Concentration (Moat Detector) ---
+        if comps:
+            _render_brand_concentration(comp_data)
 
         # --- Profit Analysis card ---
         _render_profit_analysis(product, comps if comps else [])
@@ -1529,8 +1702,9 @@ def _render_vvs_banner(product, comp_data: list[dict], alibaba_cost):
                     "profitability": ("Profitability", "attach_money"),
                     "market_quality": ("Mkt Quality", "assessment"),
                     "differentiation": ("Differtn.", "lightbulb"),
+                    "brand_moat": ("Brand Moat", "shield"),
                 }
-                for dim_key in ("demand", "competition", "profitability", "market_quality", "differentiation"):
+                for dim_key in ("demand", "competition", "profitability", "market_quality", "differentiation", "brand_moat"):
                     dim = dimensions.get(dim_key)
                     if not dim:
                         continue
@@ -1708,6 +1882,131 @@ def _render_brand_landscape(comp_data: list[dict]):
                 <span v-else style="color:#999">-</span>
             </q-td>
         ''')
+
+
+def _render_brand_concentration(comp_data: list[dict]):
+    """Render the Brand Concentration / Moat Detector card with pie chart and risk flags."""
+    conc = compute_brand_concentration(comp_data)
+    if not conc or not conc.get("seller_type_distribution"):
+        return
+
+    moat_score = conc["brand_moat_score"]
+    hhi = conc["hhi_score"]
+    level = conc["concentration_level"]
+
+    # Score color
+    if moat_score >= 65:
+        score_color = "#2E7D32"
+        score_label = "Strong Opportunity"
+    elif moat_score >= 40:
+        score_color = "#F57F17"
+        score_label = "Moderate"
+    else:
+        score_color = "#C62828"
+        score_label = "High Risk"
+
+    _type_colors = {
+        "Amazon 1P": "#FF6F00",
+        "Established Brand": "#1565C0",
+        "Private Label": "#2E7D32",
+        "Chinese Commodity": "#C62828",
+        "Unknown": "#757575",
+    }
+
+    pie_data = []
+    for item in conc["seller_type_distribution"]:
+        pie_data.append({
+            "name": item["name"],
+            "value": item["value"],
+            "itemStyle": {"color": _type_colors.get(item["name"], "#999")},
+        })
+
+    with ui.card().classes("w-full p-4 mt-4"):
+        with ui.row().classes("items-center gap-2 mb-3"):
+            ui.icon("shield").classes("text-primary")
+            ui.label("Brand Moat Detector").classes("text-subtitle1 font-bold")
+            ui.badge(
+                f"Score: {moat_score}/100",
+                color="green" if moat_score >= 65 else "orange" if moat_score >= 40 else "red",
+            ).props("dense")
+
+        with ui.row().classes("w-full gap-4 flex-wrap"):
+            # Pie chart column
+            with ui.column().classes("flex-1").style("min-width: 280px"):
+                ui.label("Seller Type Distribution").classes("text-caption font-medium mb-1")
+                ui.echart({
+                    "tooltip": {
+                        "trigger": "item",
+                        "formatter": "{b}: {c} ({d}%)",
+                    },
+                    "series": [{
+                        "type": "pie",
+                        "radius": ["35%", "65%"],
+                        "center": ["50%", "50%"],
+                        "data": pie_data,
+                        "label": {
+                            "formatter": "{b}\n{d}%",
+                            "fontSize": 11,
+                        },
+                        "emphasis": {
+                            "itemStyle": {
+                                "shadowBlur": 10,
+                                "shadowOffsetX": 0,
+                                "shadowColor": "rgba(0,0,0,0.3)",
+                            }
+                        },
+                    }],
+                }).classes("w-full").style("height: 240px")
+
+            # Metrics + risk flags column
+            with ui.column().classes("flex-1 gap-3").style("min-width: 250px"):
+                # Moat score badge
+                with ui.row().classes("items-center gap-3 px-3 py-2").style(
+                    f"background: {score_color}11; border-radius: 8px; border-left: 4px solid {score_color}"
+                ):
+                    ui.label(f"{moat_score}").classes("text-h5 font-bold").style(f"color: {score_color}")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Brand Moat Score").classes("text-caption font-medium")
+                        ui.label(score_label).classes("text-caption").style(f"color: {score_color}")
+
+                # HHI metric
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("analytics", size="sm").classes("text-secondary")
+                    ui.label(f"HHI: {hhi:.0f}").classes("text-body2 font-medium")
+                    level_color = {"high": "red", "medium": "orange", "low": "green"}.get(level, "grey")
+                    ui.badge(level.upper(), color=level_color).props("dense outline")
+
+                # Seller type counts
+                with ui.column().classes("gap-1"):
+                    _type_icons = {
+                        "amazon_1p": ("storefront", "Amazon 1P"),
+                        "established_brand": ("verified", "Established Brands"),
+                        "private_label": ("inventory_2", "Private Labels"),
+                        "chinese_commodity": ("public", "Chinese Commodity"),
+                        "unknown": ("help_outline", "Unknown"),
+                    }
+                    for key, (icon, label) in _type_icons.items():
+                        count = conc.get(f"{key}_count", 0)
+                        if count > 0:
+                            with ui.row().classes("items-center gap-2"):
+                                ui.icon(icon, size="xs").classes("text-secondary")
+                                ui.label(f"{label}: {count}").classes("text-caption")
+
+                # Risk flags
+                risk_flags = []
+                if conc["has_amazon_1p"]:
+                    risk_flags.append(("warning", "Amazon sells in this category", "#FF6F00"))
+                if level == "high":
+                    risk_flags.append(("error", "High brand concentration (dominant player)", "#C62828"))
+                if conc["chinese_commodity_count"] > len(comp_data) * 0.3:
+                    risk_flags.append(("info", "Many Chinese commodity sellers (easy to outcompete)", "#2E7D32"))
+
+                if risk_flags:
+                    ui.separator().classes("my-1")
+                    for icon, text, color in risk_flags:
+                        with ui.row().classes("items-center gap-2"):
+                            ui.icon(icon, size="xs").style(f"color: {color}")
+                            ui.label(text).classes("text-caption").style(f"color: {color}")
 
 
 def _render_profit_analysis(product, competitors: list):

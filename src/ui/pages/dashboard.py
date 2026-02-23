@@ -7,6 +7,7 @@ from sqlalchemy import func, and_
 from sqlalchemy.orm import joinedload
 
 from src.models import get_session, Category, Product, AmazonCompetitor, SearchSession
+from src.services.market_events import get_all_recent_events
 from src.services.utils import parse_bought
 from src.services.viability_scorer import calculate_vvs
 from src.ui.layout import build_layout
@@ -283,6 +284,9 @@ def dashboard_page():
             activities.sort(key=lambda a: a["timestamp"] or datetime.min, reverse=True)
             activities = activities[:10]
 
+            # Market events (review velocity anomalies, new entrants, exits)
+            market_events = get_all_recent_events(db_session=session, limit=10)
+
         finally:
             session.close()
 
@@ -525,6 +529,53 @@ def dashboard_page():
                                     ui.label(
                                         act["timestamp"].strftime("%b %d, %Y %H:%M")
                                     ).classes("text-caption text-grey-6")
+
+        # ------------------------------------------------------------------
+        # Market Events (review velocity anomalies, new entrants, exits)
+        # ------------------------------------------------------------------
+        _EVENT_CONFIG = {
+            "launch_surge": {"icon": "rocket_launch", "color": "#FF9800", "label": "Launch Surge"},
+            "decline": {"icon": "trending_down", "color": "#2196F3", "label": "Decline"},
+            "new_entrant": {"icon": "fiber_new", "color": "#F44336", "label": "New Entrant"},
+            "competitor_exit": {"icon": "logout", "color": "#9E9E9E", "label": "Competitor Exit"},
+        }
+
+        with ui.card().classes("w-full p-4"):
+            ui.label("Market Events").classes("text-subtitle1 font-bold mb-2")
+            if market_events:
+                with ui.column().classes("gap-0 w-full"):
+                    for i, ev in enumerate(market_events):
+                        cfg = _EVENT_CONFIG.get(ev["type"], {"icon": "info", "color": "#9E9E9E", "label": ev["type"]})
+                        with ui.row().classes(
+                            "items-start gap-3 py-2 w-full"
+                            + (" border-t" if i > 0 else "")
+                        ).style("border-color: #e0e0e0" if i > 0 else ""):
+                            ui.icon(cfg["icon"]).classes("text-xl mt-0.5").style(
+                                f"color: {cfg['color']}"
+                            )
+                            with ui.column().classes("gap-0 flex-1"):
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.link(
+                                        ev.get("product_name", ""),
+                                        target=f"/products/{ev['product_id']}",
+                                    ).classes("text-body2 font-medium no-underline text-primary")
+                                    ev_title = ev.get("title", "")
+                                    if len(ev_title) > 60:
+                                        ev_title = ev_title[:57] + "..."
+                                    ui.label(ev_title).classes("text-body2 text-secondary")
+                                with ui.row().classes("items-center gap-2"):
+                                    ui.badge(cfg["label"]).props(
+                                        f'color="{cfg["color"]}" text-color="white"'
+                                    ).style("font-size: 0.7rem")
+                                    ui.label(ev.get("detail", "")).classes("text-caption text-grey-7")
+                                if ev.get("detected_at"):
+                                    ts = ev["detected_at"]
+                                    ts_str = ts.strftime("%b %d, %Y %H:%M") if hasattr(ts, "strftime") else str(ts)
+                                    ui.label(ts_str).classes("text-caption text-grey-6")
+            else:
+                ui.label("No recent market events detected.").classes(
+                    "text-body2 text-grey-6 italic"
+                )
 
 
 def _action_widget(

@@ -8,7 +8,7 @@ from sqlalchemy.orm import joinedload
 
 import config
 from config import (
-    BASE_DIR, SERPAPI_KEY,
+    BASE_DIR, SERPAPI_KEY, ANTHROPIC_API_KEY,
     SP_API_REFRESH_TOKEN, SP_API_LWA_APP_ID, SP_API_LWA_CLIENT_SECRET,
     SP_API_AWS_ACCESS_KEY, SP_API_AWS_SECRET_KEY, SP_API_ROLE_ARN,
     AMAZON_DEPARTMENTS, AMAZON_DEPARTMENT_DEFAULT,
@@ -95,6 +95,49 @@ def settings_page():
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=save_key).props("color=primary")
                 ui.button("Validate Key", icon="verified", on_click=validate_key).props("flat color=grey")
+
+        # Anthropic API configuration (AI Briefs)
+        with ui.card().classes("w-full p-4 mb-4"):
+            ui.label("Anthropic API Configuration").classes("text-subtitle1 font-bold mb-2")
+            ui.label(
+                "Enter your Anthropic API key to enable AI Go-to-Market briefs. "
+                "Get a key at console.anthropic.com."
+            ).classes("text-body2 text-secondary mb-3")
+
+            current_anthropic_key = ANTHROPIC_API_KEY or ""
+            masked_anthropic = _mask_key(current_anthropic_key) if current_anthropic_key else "Not configured"
+
+            with ui.row().classes("items-center gap-2 mb-3"):
+                ui.label("Current key:").classes("text-body2 font-medium")
+                anthropic_status_label = ui.label(masked_anthropic).classes("text-body2 text-secondary")
+                if current_anthropic_key:
+                    ui.icon("check_circle").classes("text-positive")
+                else:
+                    ui.icon("warning").classes("text-warning")
+
+            anthropic_input = ui.input(
+                label="Anthropic API Key",
+                password=True,
+                password_toggle_button=True,
+                value="",
+                placeholder="Paste your Anthropic API key here (sk-ant-...)",
+            ).classes("w-full mb-2")
+
+            def save_anthropic_key():
+                new_key = anthropic_input.value.strip()
+                if not new_key:
+                    ui.notify("Please enter a key.", type="warning")
+                    return
+
+                _update_env_file("ANTHROPIC_API_KEY", new_key)
+                os.environ["ANTHROPIC_API_KEY"] = new_key
+                config.ANTHROPIC_API_KEY = new_key
+
+                anthropic_status_label.text = _mask_key(new_key)
+                anthropic_input.value = ""
+                ui.notify("Anthropic API key saved!", type="positive")
+
+            ui.button("Save Key", icon="save", on_click=save_anthropic_key).props("color=primary")
 
         # Amazon SP-API configuration
         with ui.card().classes("w-full p-4 mb-4"):

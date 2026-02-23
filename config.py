@@ -25,6 +25,9 @@ DATABASE_URL = f"sqlite:///{DB_PATH}"
 # SerpAPI
 SERPAPI_KEY = os.getenv("SERPAPI_KEY", "")
 
+# Anthropic API (for AI GTM Brief)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
 # Amazon SP-API credentials
 SP_API_REFRESH_TOKEN = os.getenv("SP_API_REFRESH_TOKEN", "")
 SP_API_LWA_APP_ID = os.getenv("SP_API_LWA_APP_ID", "")

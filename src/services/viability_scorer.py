@@ -3,6 +3,7 @@ import statistics
 from typing import Optional
 
 from src.services.utils import parse_bought as _parse_bought
+from src.services.brand_moat import compute_brand_concentration
 
 
 # Configurable dimension weights (must sum to 1.0)
@@ -10,8 +11,9 @@ _WEIGHTS = {
     "demand": 0.25,
     "competition": 0.25,
     "profitability": 0.25,
-    "market_quality": 0.15,
-    "differentiation": 0.10,
+    "market_quality": 0.10,
+    "differentiation": 0.05,
+    "brand_moat": 0.10,
 }
 
 # Verdict thresholds
@@ -51,6 +53,7 @@ def calculate_vvs(
     profitability = _score_profitability(competitors, alibaba_cost)
     market_quality = _score_market_quality(competitors)
     differentiation = _score_differentiation(competitors)
+    brand_moat = _score_brand_moat(competitors)
 
     dimensions = {
         "demand": {"score": demand[0], "weight": _WEIGHTS["demand"], "details": demand[1]},
@@ -58,6 +61,7 @@ def calculate_vvs(
         "profitability": {"score": profitability[0], "weight": _WEIGHTS["profitability"], "details": profitability[1]},
         "market_quality": {"score": market_quality[0], "weight": _WEIGHTS["market_quality"], "details": market_quality[1]},
         "differentiation": {"score": differentiation[0], "weight": _WEIGHTS["differentiation"], "details": differentiation[1]},
+        "brand_moat": {"score": brand_moat[0], "weight": _WEIGHTS["brand_moat"], "details": brand_moat[1]},
     }
 
     composite = sum(
@@ -344,6 +348,36 @@ def _score_differentiation(competitors: list[dict]) -> tuple[int, str]:
     return score, "; ".join(details_parts)
 
 
+def _score_brand_moat(competitors: list[dict]) -> tuple[int, str]:
+    """Score brand moat 1-10 based on brand concentration and seller types."""
+    if not competitors:
+        return 5, "No data"
+
+    conc = compute_brand_concentration(competitors)
+    moat_score = conc["brand_moat_score"]
+    hhi = conc["hhi_score"]
+    level = conc["concentration_level"]
+
+    details_parts = []
+
+    # Map 0-100 brand_moat_score to 1-10 VVS dimension score
+    score = max(1, min(round(moat_score / 10), 10))
+
+    # HHI context
+    details_parts.append(f"HHI {hhi:.0f} ({level} concentration)")
+
+    if conc["has_amazon_1p"]:
+        details_parts.append(f"Amazon 1P present ({conc['amazon_1p_count']})")
+
+    if conc["chinese_commodity_count"] > 0:
+        details_parts.append(f"{conc['chinese_commodity_count']} Chinese commodity sellers")
+
+    if conc["private_label_count"] > 0:
+        details_parts.append(f"{conc['private_label_count']} private labels")
+
+    return score, "; ".join(details_parts)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -369,6 +403,7 @@ def _build_recommendation(score: float, dimensions: dict) -> str:
         "profitability": "profitability",
         "market_quality": "market quality",
         "differentiation": "differentiation opportunity",
+        "brand_moat": "brand moat",
     }
 
     if score >= 8:

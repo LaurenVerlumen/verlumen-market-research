@@ -15,6 +15,9 @@ from src.services.profit_calculator import calculate_profit
 from src.services.query_optimizer import optimize_query, suggest_queries
 from src.services.search_cache import SearchCache
 from src.services.viability_scorer import calculate_vvs
+from src.services.brand_moat import classify_seller, compute_brand_concentration
+from src.services.gtm_brief_generator import generate_gtm_brief
+from src.services.market_events import detect_events, get_all_recent_events
 from src.services.xray_importer import XrayImporter
 
 __all__ = [
@@ -37,6 +40,11 @@ __all__ = [
     "calculate_profit",
     "calculate_fees",
     "calculate_vvs",
+    "classify_seller",
+    "compute_brand_concentration",
     "SearchCache",
+    "detect_events",
+    "generate_gtm_brief",
+    "get_all_recent_events",
     "XrayImporter",
 ]
