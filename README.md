@@ -214,16 +214,20 @@ Excel import, SerpAPI search, competition scoring, product dashboard, export sys
 - Pre-seeded Toys & Games tree with 20 Amazon subcategories + Baby Products
 - SQLite migration: safe table recreation for schema change, department mapping migration
 
-## Roadmap: Phase 6 (Future)
+## Roadmap: Phase 6 - Next-Gen Intelligence
 
-| # | Feature | Description |
-|---|---------|-------------|
-| 6.1 | **Review Sentiment Analysis** | NLP analysis of competitor reviews via SP-API, extract opportunities |
-| 6.2 | **Keepa Integration** | Historical price/BSR charts, seasonal pattern detection |
-| 6.3 | **Testing & CI/CD** | pytest suite (60%+ coverage), GitHub Actions, pre-commit hooks |
-| 6.4 | **Multi-user Support** | Authentication, per-user presets and decision logs |
-| 6.5 | **Notification System** | Price drop alerts, new competitor alerts, scheduled report emails |
-| 6.6 | **Product Comparison** | Side-by-side comparison of 2-3 products with shared competitor analysis |
+| Sprint | Feature | Description |
+|--------|---------|-------------|
+| 1 | **AI Go-to-Market Brief** | Claude-powered 1-page brief per product: launch price, listing angles, risk flags, 90-day plan |
+| 1 | **Brand Moat Detector** | Classify sellers (Amazon 1P / private label / established brand), add as 6th VVS dimension |
+| 1 | **Review Velocity Monitor** | Alert on competitor launch surges, decline signals, market events |
+| 2 | **Review NLP Pain Map** | Aspect-based sentiment mining: cluster complaints → product improvement opportunities |
+| 2 | **Seasonal Forecasting** | Google Trends + BSR history → Prophet model → optimal launch window recommendations |
+| 2 | **PPC Keyword Intelligence** | Reverse-ASIN keywords from top competitors → auto-generated campaign seeds |
+| 3 | **LLM Listing Autopsy** | "Why is this beating me?" — structured competitive analysis of bullet points, A+ content |
+| 3 | **Listing Quality Regression** | XGBoost model trained on own data → predict sales from listing attributes (data flywheel) |
+| 4 | **Image Differentiation** | CLIP-based visual analysis of competitor thumbnails → CTR differentiation opportunities |
+| 4 | **Cross-Marketplace Gap** | Diff products across 8 marketplaces → white-space expansion + pricing arbitrage |
 
 See **[PROJECT_PLAN.md](PROJECT_PLAN.md)** for the full detailed plan.
 

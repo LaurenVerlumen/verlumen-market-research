@@ -102,79 +102,207 @@ Products and Export pages: indented dropdown with product counts per category. S
 
 ---
 
-## Phase 6: Next Frontier (Future)
+## Phase 6: Next-Gen Intelligence
 
-### 6.1 - Review Sentiment Analysis
-- Fetch top competitor reviews via SP-API
-- NLP sentiment analysis (positive/negative/neutral)
-- Extract common complaints (opportunities for differentiation)
-- "Customers want X but competitors don't offer it" insights
+The leap from "research tool" to "AI-powered competitive intelligence platform." Every feature below was selected because no existing Amazon tool (Helium 10, Jungle Scout, SmartScout, DataDive) does it well — or at all.
 
-### 6.2 - Keepa / CamelCamelCamel Integration
-- Historical price charts (90-day, 1-year trends)
-- BSR history tracking
-- Seasonal pattern detection
-- "Best time to launch" recommendation
+### Sprint 1: Quick Wins (1-2 days each, zero new data sources)
 
-### 6.3 - Testing & CI/CD
-- pytest test suite (target 60%+ coverage)
-- GitHub Actions CI pipeline
-- Automated lint (black, flake8, mypy)
-- Pre-commit hooks
+#### 6.1 - AI Go-to-Market Brief
+LLM synthesis layer that turns all existing scored data into a 1-page actionable brief per product.
 
-### 6.4 - Multi-User Support
-- User authentication (login/registration)
-- Per-user filter presets and decision logs
-- Role-based access (admin, researcher, viewer)
-- Audit trail for all actions
+- **Input**: VVS dimensions, pricing strategies, demand estimates, trend data, competitor stats (all already computed)
+- **Output** (structured JSON via Claude tool-use):
+  - Recommended launch price with rationale
+  - Top 3 listing headline angles
+  - Risk flags ("2 of top 5 are Amazon 1P — avoid" or "all sellers are unbranded — your brand is a moat")
+  - 90-day launch milestones with concrete actions
+- New service: `src/services/gtm_brief_generator.py`
+- Rendered as collapsible "AI Brief" section in product detail + included in PDF export
+- Cost: ~$0.002/product with Claude Haiku, ~$0.02 with Sonnet
+- **Why it matters**: Reduces cognitive load to near-zero. A non-expert can hand the brief to a factory rep or PPC agency the same day.
 
-### 6.5 - Notification System
-- Price drop alerts ("Competitor X dropped price 20%")
-- New competitor alerts
-- Scheduled report emails (weekly digest)
-- In-app notification center
+#### 6.2 - Brand Moat Detector
+Classify competitors by seller type and compute a Brand Concentration Risk Score per subcategory.
 
-### 6.6 - Product Comparison View
-- Side-by-side comparison of 2-3 products
-- Shared competitor overlap analysis
-- Category-level aggregation charts
-- Decision matrix for sourcing choices
+- **Seller classification**: Amazon 1P, private label (unbranded), established brand (has trademark/website), Chinese commodity seller
+- **Data**: `seller_country`, `brand`, `manufacturer` already exist in `AmazonCompetitor` model from Xray import — currently unused in scoring
+- **Metrics**:
+  - Herfindahl-Hirschman Index (HHI) for revenue concentration
+  - Amazon-as-competitor flag (red flag)
+  - Brand vs. commodity seller ratio
+- **Integration**: Add as 6th VVS dimension (weight ~0.10, reduce differentiation from 0.10 to 0.05)
+- **UI**: Brand concentration pie chart on product detail Analysis tab
+- **Why it matters**: A market of 20 unbranded Chinese sellers = STRONG GO. Same market with 3 established US toy brands = CONDITIONAL at best. This single insight flips decisions.
 
-### 6.7 - Performance Optimization
-- Eager loading / batch queries to eliminate N+1
-- Pagination with server-side filtering
-- Background data loading
-- Database indexing audit
+#### 6.3 - Review Velocity Anomaly Detector
+Track weekly review count deltas across all monitored competitors. Flag market events.
+
+- **Signals**: New entrant surge (50+ reviews in 30 days), established player decline (velocity drop), aggressive relaunch
+- **Implementation**: Diff review counts per ASIN between scheduled research runs (data already collected)
+- **UI**: "Market Events" feed on dashboard, alert badges on competitor table
+- **Why it matters**: Earliest public signal of competitive threats. No tool alerts you to competitor launches in your niche.
+
+### Sprint 2: Intelligence Layer (3-5 days each, one new API each)
+
+#### 6.4 - Review NLP Pain Map
+Mine competitor reviews to extract actionable product improvement opportunities.
+
+- **Pipeline**: Fetch 50-200 reviews per top-5 competitors → aspect-based sentiment analysis → cluster complaints by topic (size, material, assembly, durability, packaging) → frequency × intensity heat map
+- **Tech**: `pyabsa` (open-source ABSA) or Claude batch calls with structured output
+- **Data source**: SerpAPI reviews endpoint (~$0.005/review page) or SP-API `getReviews` (gated)
+- **Output**: "42% of negatives mention loose joints → emphasize mortise & tenon joinery and offer 30-day structural guarantee"
+- New service: `src/services/review_miner.py`, new `review_analysis` DB table, "Review Map" tab in product detail
+- **Why it matters**: The highest-value feature for a niche toy brand. A "paint chips" cluster in reviews means Verlumen can invest $0.30/unit in better finish and own 4.8+ stars within 6 months.
+
+#### 6.5 - Seasonal Demand Forecasting
+Predict optimal launch windows using Google Trends + accumulated BSR history.
+
+- **Data**: `pytrends` (free, no API key) for 5-year weekly interest data + own BSR time-series from scheduled research sessions
+- **Model**: Prophet or ARIMA fit on combined signals → monthly demand index, peak week prediction
+- **Output**: "Wooden building blocks peak week 47 (late Nov). Ship FBA by mid-October to capture Q4. Launching after Dec 1 costs you an entire season of review accumulation."
+- New service: `src/services/season_forecaster.py`, "Best Launch Window" card on product detail
+- **Why it matters**: For kids toys, Q4 is 3-4x baseline. Getting timing wrong by 6 weeks costs an entire season.
+
+#### 6.6 - PPC Keyword Intelligence
+Reverse-ASIN keyword lookup on top competitors → auto-generated campaign seeds.
+
+- **Pipeline**: Top 5 competitor ASINs (already stored) → DataForSEO Amazon keywords API (~$0.025/product) → keyword dedup + tiering
+- **Output tiers**:
+  - Auto campaign seeds: all gap keywords with high volume
+  - Manual exact match: keywords where competitors rank #1-3 (intercept)
+  - Negative keyword list: irrelevant high-volume terms
+- Exportable CSV + rendered table in product detail, wire into `excel_exporter.py`
+- **Why it matters**: PPC keyword research is 3-5 hours per product launch. This automates it entirely. Competitors charge $99+/month for standalone versions (Helium 10 Cerebro).
+
+### Sprint 3: Advanced ML (1 week each)
+
+#### 6.7 - LLM Listing Autopsy
+Feed top competitor listings into Claude for structured competitive analysis.
+
+- **Input**: Bullet points, A+ content, titles from SP-API `getListingsItem` or SerpAPI product scrape
+- **Output**: `{gaps: [], winning_angles: [], missing_claims: [], messaging_framework: ""}`
+- "All top sellers mention ASTM certification and age 3+ but none mention sensory play — that is your opening"
+- New service: `src/services/listing_analyzer.py`, on-demand from product detail
+- **Why it matters**: Directly actionable — seller can draft their listing using the winning framework the same day.
+
+#### 6.8 - Listing Quality Regression Model
+Train a predictive model on accumulated competitor data to forecast sales from listing attributes.
+
+- **Model**: XGBoost/LightGBM trained on `AmazonCompetitor` rows: title length, image count, price vs. median, review count, rating, badge → predict `bought_last_month`
+- **Data flywheel**: Model improves with every research session. After 200+ competitors with sales data, predictions become niche-specific.
+- **Use case**: "Your listing attributes predict 340 units/month. Adding ASTM certification mention increases prediction to 480 units/month."
+- New service: `src/services/listing_predictor.py`, model serialized to `data/listing_model.joblib`
+- **Why it matters**: Converts from "measure the market" to "optimize my listing." The data flywheel is a moat competitors can't replicate.
+
+### Sprint 4: Experimental (exploratory)
+
+#### 6.9 - Product Image Differentiation Scorer
+CLIP-based visual analysis of competitor thumbnails.
+
+- **Pipeline**: Download competitor thumbnails (URLs already in DB) → CLIP embeddings → cluster into visual styles (lifestyle, white-background, infographic, bundle) → score visual diversity
+- "All competitors use white-background shots — be the only lifestyle photo for 15-30% CTR lift"
+- New service: `src/services/image_analyzer.py`, visual grid in product detail
+- **Why it matters**: Visual differentiation is top-3 factor in Amazon CTR. Genuinely novel — no tool does this.
+
+#### 6.10 - Cross-Marketplace Gap Analyzer
+Compare products and competitors across all 8 supported marketplaces.
+
+- **Pipeline**: Multi-marketplace data already exists → diff-view across marketplace tables
+- Flag ASINs high-performing in US but absent in DE/UK (white-space expansion)
+- Flag pricing arbitrage: product at €32 in DE, $22 in US
+- **Why it matters**: Lowest effort of all features — just a new view over existing data.
 
 ---
 
-## Architecture (Current)
+### Parallel Track: Codebase Health
+
+Performance and architecture improvements to run alongside feature sprints.
+
+#### P0 - Critical (do first)
+| Issue | File | Fix |
+|-------|------|-----|
+| N+1 queries in category tree | `layout.py:129-180` | Add `selectinload(Category.children)` |
+| Missing DB indexes | `database.py` | Add indexes on `product(status, created_at)`, `competitor(position)` |
+| In-memory pagination | `products.py:1228-1306` | Move search/status/count filters to SQL |
+| VVS never cached | `dashboard.py` | Store VVS score in DB, recompute on new research |
+| No SerpAPI rate limiting | `amazon_search.py` | Add `asyncio.Semaphore(2)` |
+
+#### P1 - Important
+| Issue | File | Fix |
+|-------|------|-----|
+| Products page monolithic (1,629 lines) | `products.py` | Split into filters, render, bulk_actions modules |
+| Product detail monolithic (1,959 lines) | `product_detail.py` | Extract research dialog, Xray UI to components |
+| Duplicate session management (30+ try/finally) | All pages | Create `@contextmanager with_db()` helper |
+| Async operations not cancelled on page leave | `products.py:647` | Use `asyncio.Task` with timeout |
+| Dashboard subquery complexity | `dashboard.py:80-120` | Use window functions, batch VVS computation |
+
+#### P2 - Nice to Have
+| Issue | Fix |
+|-------|-----|
+| Filter presets browser-only (localStorage) | Persist to DB |
+| Bulk selection lost on refresh | Restore by product IDs |
+| Trend data underutilized | Add trending badges to dashboard |
+| No decision log viewer | Add timeline in product detail |
+
+---
+
+### Phase 6 Scores (Projected)
+| Area | Current | Target | Key Improvement |
+|------|---------|--------|----------------|
+| Feature completeness | 9/10 | 10/10 | AI briefs, review mining, PPC keywords |
+| UI/UX | 9/10 | 9.5/10 | Loading states, performance fixes |
+| ML/Intelligence | 8/10 | 9.5/10 | LLM synthesis, ABSA reviews, seasonal forecasting, CLIP vision |
+| Code quality | 7/10 | 8.5/10 | Module splitting, session helpers, indexes |
+| Testing | 0/10 | 0/10 | Deferred to Phase 7 |
+| Production readiness | 8/10 | 9/10 | Rate limiting, caching, eager loading |
+| Performance | 5/10 | 8/10 | DB indexes, SQL-level pagination, VVS caching |
+
+### New Dependencies
+| Library | Purpose | License | Size |
+|---------|---------|---------|------|
+| `anthropic` | Claude API for AI briefs, listing autopsy | MIT | ~5MB |
+| `pytrends` | Google Trends data (free) | MIT | ~1MB |
+| `pyabsa` | Aspect-based sentiment analysis | MIT | ~50MB |
+| `xgboost` | Listing quality regression | Apache 2.0 | ~15MB |
+| `transformers` + `torch` (optional) | CLIP image analysis | Apache 2.0 | ~600MB |
+| DataForSEO API | PPC keyword intelligence | Commercial | API only |
+
+---
+
+## Architecture (Current + Phase 6 Planned)
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │               UI Layer (NiceGUI 3.x)                 │
 │                                                       │
 │  Dashboard    Products     Product Detail     Export   │
-│  (action      (presets,    (4 tabs: Overview, (Excel, │
-│   widgets,    global       Competitors,        PDF)   │
-│   VVS,        search,      Analysis,                  │
-│   activity)   bulk ops)    History)                    │
+│  (action      (presets,    (5+ tabs: Overview,(Excel, │
+│   widgets,    global       Competitors,        PDF,   │
+│   VVS,        search,      Analysis, History,  AI     │
+│   activity,   bulk ops,    Review Map*, AI     Brief) │
+│   events*)    hierarchy)   Brief*, PPC*)              │
 │                                                       │
 │  Settings     Layout (global search bar, sidebar)     │
-│  (schedule,                                           │
-│   API keys,                                           │
-│   departments)                                        │
+│  (category                                            │
+│   tree, API                                           │
+│   keys, sched)                                        │
 └────────────────────────┬─────────────────────────────┘
                          │
 ┌────────────────────────▼─────────────────────────────┐
-│              Service Layer (23 services)              │
+│           Service Layer (23 + 7 planned)              │
 │                                                       │
 │  Search*     SP-API    Xray      TrendTracker         │
 │  Analyzer    Scorer*   Price     Demand    VVS        │
 │  Profit      Fees*     Export*   PDF*      Scheduler* │
-│  ImageFetch  Cache     QueryOpt                       │
+│  ImageFetch  Cache     QueryOpt  CatHelpers*          │
 │                                                       │
-│  * = upgraded in Phase 4-5                            │
+│  Phase 6 (planned):                                   │
+│  GTMBrief*    ReviewMiner*   SeasonForecaster*        │
+│  ListingAnalyzer*  ListingPredictor*  ImageAnalyzer*  │
+│  KeywordIntel*                                        │
+│                                                       │
+│  * = new or upgraded                                  │
 └────────────────────────┬─────────────────────────────┘
                          │
 ┌────────────────────────▼─────────────────────────────┐
@@ -183,12 +311,14 @@ Products and Export pages: indented dropdown with product counts per category. S
 │  Product (+ decision_log, status)                     │
 │  AmazonCompetitor (19+ columns, trend support)        │
 │  SearchSession (+ amazon_domain for marketplace)      │
-│  Category (hierarchical tree)   SearchCache             │
+│  Category (hierarchical tree)   SearchCache           │
+│  ReviewAnalysis* (Phase 6)                            │
 └──────────────────────────────────────────────────────┘
 
 Deployment: Docker (Dockerfile + docker-compose.yml)
 Scheduling: APScheduler (background research)
-ML: sentence-transformers + scikit-learn
+ML: sentence-transformers + scikit-learn + XGBoost* + CLIP*
+LLM: Claude API (Haiku/Sonnet) for AI briefs + listing analysis
 ```
 
 ---
