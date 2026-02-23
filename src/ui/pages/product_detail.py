@@ -626,7 +626,7 @@ def _render_ai_brief_section(product, product_id):
                     if latest:
                         comps = (
                             db.query(AmazonCompetitor)
-                            .filter(AmazonCompetitor.session_id == latest.id)
+                            .filter(AmazonCompetitor.search_session_id == latest.id)
                             .all()
                         )
                         competitors = [
