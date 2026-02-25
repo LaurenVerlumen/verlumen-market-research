@@ -16,6 +16,7 @@ from config import (
 from src.models import Category, Product, get_session
 from src.services import AmazonSearchService
 from src.services.sp_api_client import SPAPIClient
+from src.ui.components.helpers import page_header, section_header, CARD_CLASSES
 from src.ui.layout import build_layout
 
 
@@ -27,11 +28,11 @@ def settings_page():
     content = build_layout()
 
     with content:
-        ui.label("Settings").classes("text-h5 font-bold")
+        page_header("Settings", subtitle="Configure API keys and app preferences.", icon="settings")
 
         # SerpAPI configuration
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("SerpAPI Configuration").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("SerpAPI Configuration", icon="key")
             ui.label(
                 "Enter your SerpAPI key to enable Amazon product research. "
                 "Get a key at serpapi.com."
@@ -55,7 +56,7 @@ def settings_page():
                 password_toggle_button=True,
                 value="",
                 placeholder="Paste your SerpAPI key here",
-            ).classes("w-full mb-2")
+            ).props("outlined").classes("w-full mb-2")
 
             validation_label = ui.label("").classes("text-body2 mt-1")
 
@@ -94,11 +95,11 @@ def settings_page():
 
             with ui.row().classes("gap-2"):
                 ui.button("Save Key", icon="save", on_click=save_key).props("color=primary")
-                ui.button("Validate Key", icon="verified", on_click=validate_key).props("flat color=grey")
+                ui.button("Validate Key", icon="verified", on_click=validate_key).props("flat color=secondary")
 
         # Anthropic API configuration (AI Briefs)
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Anthropic API Configuration").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("Anthropic API Configuration", icon="smart_toy")
             ui.label(
                 "Enter your Anthropic API key to enable AI Go-to-Market briefs. "
                 "Get a key at console.anthropic.com."
@@ -121,7 +122,7 @@ def settings_page():
                 password_toggle_button=True,
                 value="",
                 placeholder="Paste your Anthropic API key here (sk-ant-...)",
-            ).classes("w-full mb-2")
+            ).props("outlined").classes("w-full mb-2")
 
             def save_anthropic_key():
                 new_key = anthropic_input.value.strip()
@@ -140,8 +141,8 @@ def settings_page():
             ui.button("Save Key", icon="save", on_click=save_anthropic_key).props("color=primary")
 
         # Amazon SP-API configuration
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Amazon SP-API Configuration").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("Amazon SP-API Configuration", icon="cloud_sync")
             ui.label(
                 "Connect your Amazon Seller account for brand enrichment."
             ).classes("text-body2 text-secondary mb-3")
@@ -177,7 +178,7 @@ def settings_page():
                         password_toggle_button=True,
                         value="",
                         placeholder=f"Enter {label_text}",
-                    ).classes("flex-1")
+                    ).props("outlined").classes("flex-1")
 
             sp_validation_label = ui.label("").classes("text-body2 mt-1")
 
@@ -224,8 +225,8 @@ def settings_page():
             ).props("color=primary").classes("mt-2")
 
         # Database info
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Database").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("Database", icon="storage")
             from config import DB_PATH
             db_exists = DB_PATH.exists()
             db_size = DB_PATH.stat().st_size / 1024 if db_exists else 0
@@ -260,7 +261,7 @@ def settings_page():
 
             with ui.row().classes("gap-2 mt-2"):
                 ui.button("Recreate Tables", icon="refresh", on_click=reset_db).props(
-                    "flat color=grey"
+                    "flat color=secondary"
                 )
                 ui.button(
                     "Reset All Research Data",
@@ -276,8 +277,8 @@ def settings_page():
                 ).props("flat color=negative")
 
         # Search Cache stats
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Search Cache").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("Search Cache", icon="cached")
             ui.label(
                 "Amazon search results are cached for 24 hours to reduce API usage."
             ).classes("text-body2 text-secondary mb-3")
@@ -322,11 +323,11 @@ def settings_page():
 
             ui.button(
                 "Clear Expired Cache", icon="cleaning_services", on_click=clear_expired,
-            ).props("flat color=grey").classes("mt-2")
+            ).props("flat color=secondary").classes("mt-2")
 
         # Category Management (hierarchical tree)
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Category Management").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("Category Management", icon="account_tree")
             ui.label(
                 "Manage product categories as a hierarchy. "
                 "Each category can have subcategories and its own Amazon department."
@@ -343,8 +344,8 @@ def settings_page():
             _render_category_tree(category_tree_container, on_refresh=refresh_categories)
 
         # Scheduled Research
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Scheduled Research").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("Scheduled Research", icon="schedule")
             ui.label(
                 "Automatically research products on a schedule. "
                 "The scheduler runs in the background and researches all products "
@@ -459,8 +460,8 @@ def settings_page():
                 ).props("outlined color=primary")
 
         # About
-        with ui.card().classes("w-full p-4"):
-            ui.label("About").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes(CARD_CLASSES):
+            section_header("About", icon="info")
             ui.label("Verlumen Market Research Tool").classes("text-body2")
             ui.label(
                 "Automates Amazon competition analysis for wood/Montessori toy products. "

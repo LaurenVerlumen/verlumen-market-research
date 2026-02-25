@@ -9,9 +9,10 @@ from src.services.utils import parse_bought
 _COL_ORDER_KEY = "comp_table_col_order"
 _SORT_KEY = "comp_table_sort"
 _VIS_COLS_KEY = "comp_table_visible_cols"
+_COL_WIDTHS_KEY = "comp_table_col_widths"
 
 # Columns that are always visible and not toggleable
-_ALWAYS_VISIBLE = {"actions", "reviewed", "position"}
+_ALWAYS_VISIBLE = {"actions", "position"}
 
 # Column group presets (column names -> user-friendly group labels)
 _COL_GROUPS = {
@@ -23,7 +24,6 @@ _COL_GROUPS = {
 
 COLUMNS = [
     {"name": "actions", "label": "", "field": "actions", "align": "center", "sortable": False},
-    {"name": "reviewed", "label": "Seen", "field": "reviewed", "sortable": True, "align": "center"},
     {"name": "position", "label": "#", "field": "position", "sortable": True, "align": "center"},
     {"name": "trend", "label": "Trend", "field": "trend_status", "align": "center", "sortable": True},
     {"name": "match_score", "label": "Relevance", "field": "match_score_raw", "sortable": True, "align": "center"},
@@ -44,11 +44,22 @@ COLUMNS = [
     {"name": "badge", "label": "Badge", "field": "badge", "align": "left"},
 ]
 
-# Read-only columns: no actions, no reviewed checkbox
-COLUMNS_READONLY = [c for c in COLUMNS if c["name"] not in ("actions", "reviewed")]
+# Read-only columns: no actions column
+COLUMNS_READONLY = [c for c in COLUMNS if c["name"] != "actions"]
 
 # All toggleable column names (excludes always-visible)
 _TOGGLEABLE_COLS = [c["name"] for c in COLUMNS if c["name"] not in _ALWAYS_VISIBLE]
+
+# Default column widths in pixels (used for table-layout:fixed initial sizing)
+_DEFAULT_COL_WIDTHS = {
+    "actions": 48, "position": 50, "trend": 70,
+    "match_score": 85, "title": 280, "asin": 120, "brand": 110,
+    "price": 80, "rating": 70, "review_count": 85,
+    "bought_last_month": 95, "est_revenue": 105,
+    "monthly_sales": 95, "monthly_revenue": 110,
+    "seller": 120, "fulfillment": 75, "fba_fees": 70,
+    "is_prime": 60, "badge": 100,
+}
 
 
 def competitor_table(
@@ -93,71 +104,26 @@ def competitor_table(
         changes page, rows-per-page, or sort settings.
     """
     all_rows = _prepare_rows(competitors, trend_data=trend_data)
-    is_editable = on_delete or on_score_change or on_review_toggle
-    columns = COLUMNS if is_editable else COLUMNS_READONLY
+    is_editable = on_delete or on_score_change
+    # Deep-copy columns so we can attach per-instance width styles
+    columns = [dict(c) for c in (COLUMNS if is_editable else COLUMNS_READONLY)]
+    for _col in columns:
+        _w = _DEFAULT_COL_WIDTHS.get(_col["name"], 100)
+        _col["style"] = (
+            f"width:{_w}px;min-width:{_w}px;"
+            "overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        )
+        _col["headerStyle"] = f"width:{_w}px;min-width:{_w}px"
 
     # Track visible columns (all toggleable shown by default)
     visible_cols = list(_TOGGLEABLE_COLS)
 
-    with ui.card().classes("w-full p-4"):
-        with ui.row().classes("items-center gap-2 mb-2"):
+    with ui.card().classes("w-full p-5"):
+        # --- Row 1: Title bar ---
+        with ui.row().classes("items-center gap-2 mb-1"):
+            ui.icon("groups").classes("text-accent")
             ui.label(title).classes("text-subtitle1 font-bold")
             count_label = ui.label(f"({len(all_rows)})").classes("text-body2 text-secondary")
-
-            # --- Column visibility toggle ---
-            with ui.button(icon="visibility").props(
-                "flat dense round size=sm color=grey-7"
-            ).classes("q-ml-sm"):
-                ui.tooltip("Show/hide columns")
-                with ui.menu().props("auto-close=false").classes("q-pa-sm") as vis_menu:
-                    ui.label("Column Groups").classes("text-caption text-bold q-mb-xs")
-                    with ui.row().classes("gap-1 q-mb-sm"):
-                        def _apply_group(group_cols: list[str]):
-                            visible_cols.clear()
-                            visible_cols.extend(group_cols)
-                            for cb_name, cb_ref in _col_checkboxes.items():
-                                cb_ref.value = cb_name in visible_cols
-                            _sync_visible_cols()
-
-                        for gname, gcols in _COL_GROUPS.items():
-                            ui.button(
-                                gname,
-                                on_click=lambda g=gcols: _apply_group(g),
-                            ).props("outline dense size=xs color=primary")
-                        ui.button(
-                            "Full",
-                            on_click=lambda: _apply_group(list(_TOGGLEABLE_COLS)),
-                        ).props("outline dense size=xs color=positive")
-
-                    ui.separator()
-                    _col_checkboxes: dict = {}
-                    # Build a name->label mapping from COLUMNS
-                    _col_label_map = {c["name"]: c["label"] for c in COLUMNS}
-                    for col_name in _TOGGLEABLE_COLS:
-                        label_text = _col_label_map.get(col_name, col_name)
-
-                        def _on_toggle(val, cn=col_name):
-                            if val and cn not in visible_cols:
-                                visible_cols.append(cn)
-                            elif not val and cn in visible_cols:
-                                visible_cols.remove(cn)
-                            _sync_visible_cols()
-
-                        cb = ui.checkbox(
-                            label_text,
-                            value=True,
-                            on_change=lambda e, cn=col_name: _on_toggle(e.value, cn),
-                        ).props("dense").classes("q-my-none")
-                        _col_checkboxes[col_name] = cb
-
-            if on_bulk_delete:
-                ui.space()
-                sel_label = ui.label("").classes("text-body2 text-secondary")
-                del_sel_btn = ui.button(
-                    "Delete selected", icon="delete_sweep",
-                ).props("color=negative outline size=sm")
-                sel_label.set_visibility(False)
-                del_sel_btn.set_visibility(False)
 
         if not all_rows:
             ui.label("No competitor data available.").classes("text-body2 text-secondary")
@@ -190,15 +156,6 @@ def competitor_table(
 
                 prime_toggle = ui.checkbox("Prime only").classes("self-center")
 
-                if on_review_toggle:
-                    reviewed_select = ui.select(
-                        options={"all": "All", "seen": "Seen only", "unseen": "Unseen only"},
-                        value="all",
-                        label="Reviewed",
-                    ).props("dense outlined").classes("w-36")
-                else:
-                    reviewed_select = None
-
                 if badges:
                     badge_select = ui.select(
                         options=badges,
@@ -211,6 +168,69 @@ def competitor_table(
                 ui.button("Clear filters", icon="clear_all", on_click=lambda: _clear_filters()).props(
                     "flat dense color=secondary size=sm"
                 )
+
+        # --- Toolbar (directly above table) ---
+        with ui.row().classes("items-center gap-2 mb-2 flex-wrap"):
+
+            def _apply_group(group_cols: list[str]):
+                visible_cols.clear()
+                visible_cols.extend(group_cols)
+                for cb_name, cb_ref in _col_checkboxes.items():
+                    cb_ref.value = cb_name in visible_cols
+                _sync_visible_cols()
+
+            # "Columns" button with dropdown menu for individual column toggles
+            with ui.button("Columns", icon="view_column").props(
+                "outline dense size=sm color=primary no-caps"
+            ):
+                with ui.menu().props("auto-close=false").classes("q-pa-sm"):
+                    _col_checkboxes: dict = {}
+                    _col_label_map = {c["name"]: c["label"] for c in COLUMNS}
+                    for col_name in _TOGGLEABLE_COLS:
+                        label_text = _col_label_map.get(col_name, col_name)
+
+                        def _on_toggle(val, cn=col_name):
+                            if val and cn not in visible_cols:
+                                visible_cols.append(cn)
+                            elif not val and cn in visible_cols:
+                                visible_cols.remove(cn)
+                            _sync_visible_cols()
+
+                        cb = ui.checkbox(
+                            label_text,
+                            value=True,
+                            on_change=lambda e, cn=col_name: _on_toggle(e.value, cn),
+                        ).props("dense").classes("q-my-none")
+                        _col_checkboxes[col_name] = cb
+
+            # Group preset chips (inline in toolbar)
+            ui.separator().props("vertical").classes("q-mx-xs")
+            for gname, gcols in _COL_GROUPS.items():
+                ui.button(
+                    gname,
+                    on_click=lambda g=gcols: _apply_group(g),
+                ).props("outline dense size=sm color=primary no-caps")
+            ui.button(
+                "Full",
+                on_click=lambda: _apply_group(list(_TOGGLEABLE_COLS)),
+            ).props("outline dense size=sm color=positive no-caps")
+
+            # Reset layout button
+            ui.separator().props("vertical").classes("q-mx-xs")
+            ui.button(
+                "Reset layout", icon="restart_alt",
+                on_click=lambda: _reset_table_layout(),
+            ).props("outline dense size=sm color=grey-7 no-caps")
+
+            # Bulk delete controls (pushed to the right)
+            if on_bulk_delete:
+                ui.space()
+                sel_label = ui.label("").classes("text-body2 text-secondary")
+                del_sel_btn = ui.button(
+                    "Delete selected", icon="delete_sweep",
+                ).props("color=negative outline size=sm")
+                sel_label.set_visibility(False)
+                del_sel_btn.set_visibility(False)
 
         # Default sort by match_score desc if scores are available, else position
         has_scores = any(r.get("match_score_raw", 0) > 0 for r in all_rows)
@@ -286,7 +306,6 @@ def competitor_table(
             rat_min = rating_min.value
             prime_only = prime_toggle.value
             sel_badges = (badge_select.value or []) if badge_select else []
-            rev_filter = (reviewed_select.value or "all") if reviewed_select else "all"
 
             filtered = []
             for r in all_rows:
@@ -320,11 +339,6 @@ def competitor_table(
                 # Badge filter
                 if sel_badges and r.get("badge", "-") not in sel_badges:
                     continue
-                # Reviewed filter
-                if rev_filter == "seen" and not r.get("reviewed_raw"):
-                    continue
-                if rev_filter == "unseen" and r.get("reviewed_raw"):
-                    continue
                 filtered.append(r)
 
             table.rows = filtered
@@ -340,8 +354,6 @@ def competitor_table(
             prime_toggle.value = False
             if badge_select:
                 badge_select.value = []
-            if reviewed_select:
-                reviewed_select.value = "all"
             table.rows = all_rows
             count_label.text = f"({len(all_rows)})"
             table.update()
@@ -353,38 +365,6 @@ def competitor_table(
         prime_toggle.on("update:model-value", lambda: _apply_filters())
         if badge_select:
             badge_select.on("update:model-value", lambda: _apply_filters())
-        if reviewed_select:
-            reviewed_select.on("update:model-value", lambda: _apply_filters())
-
-        # --- Reviewed checkbox column ---
-        if on_review_toggle:
-            table.add_slot('body-cell-reviewed', r'''
-                <q-td :props="props">
-                    <q-checkbox
-                        :model-value="props.row.reviewed_raw"
-                        @update:model-value="val => $parent.$emit('review', {asin: props.row.asin, checked: val})"
-                        dense
-                        :color="props.row.reviewed_raw ? 'positive' : 'grey'"
-                    />
-                </q-td>
-            ''')
-
-            def _handle_review(e):
-                data = e.args
-                asin = data.get("asin", "") if isinstance(data, dict) else ""
-                checked = data.get("checked", False) if isinstance(data, dict) else False
-                if asin:
-                    # Update local row state so the checkbox stays toggled
-                    for r in all_rows:
-                        if r["asin"] == asin:
-                            r["reviewed_raw"] = checked
-                            r["reviewed"] = "Yes" if checked else ""
-                            break
-                    # Reassign rows to force Vue reactivity (in-place mutation isn't detected)
-                    table.rows = list(all_rows)
-                    on_review_toggle(asin, checked)
-
-            table.on("review", _handle_review)
 
         # --- Color-coded relevance cell ---
         if on_score_change:
@@ -702,51 +682,26 @@ def competitor_table(
             </q-avatar>
         '''
 
-        if on_review_toggle:
-            # Title & ASIN links auto-mark as "Seen" on click
-            table.add_slot('body-cell-title', r'''
-                <q-td :props="props">
-                    <div style="display:flex; align-items:center">
-                        ''' + _thumb_html + r'''
-                        <a v-if="props.row.amazon_url" :href="props.row.amazon_url" target="_blank"
-                           class="text-primary" style="text-decoration:none"
-                           @click="() => { if (!props.row.reviewed_raw) $parent.$emit('review', {asin: props.row.asin, checked: true}) }">
-                            {{ props.row.title }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
-                        </a>
-                        <span v-else>{{ props.row.title }}</span>
-                    </div>
-                </q-td>
-            ''')
-            table.add_slot('body-cell-asin', r'''
-                <q-td :props="props">
-                    <a :href="'https://amazon.com/dp/' + props.row.asin" target="_blank"
-                       class="text-primary" style="text-decoration:none"
-                       @click="() => { if (!props.row.reviewed_raw) $parent.$emit('review', {asin: props.row.asin, checked: true}) }">
-                        {{ props.row.asin }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
-                    </a>
-                </q-td>
-            ''')
-        else:
-            table.add_slot('body-cell-title', r'''
-                <q-td :props="props">
-                    <div style="display:flex; align-items:center">
-                        ''' + _thumb_html + r'''
-                        <a v-if="props.row.amazon_url" :href="props.row.amazon_url" target="_blank"
-                           class="text-primary" style="text-decoration:none">
-                            {{ props.row.title }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
-                        </a>
-                        <span v-else>{{ props.row.title }}</span>
-                    </div>
-                </q-td>
-            ''')
-            table.add_slot('body-cell-asin', r'''
-                <q-td :props="props">
-                    <a :href="'https://amazon.com/dp/' + props.row.asin" target="_blank"
+        table.add_slot('body-cell-title', r'''
+            <q-td :props="props">
+                <div style="display:flex; align-items:center">
+                    ''' + _thumb_html + r'''
+                    <a v-if="props.row.amazon_url" :href="props.row.amazon_url" target="_blank"
                        class="text-primary" style="text-decoration:none">
-                        {{ props.row.asin }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                        {{ props.row.title }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
                     </a>
-                </q-td>
-            ''')
+                    <span v-else>{{ props.row.title }}</span>
+                </div>
+            </q-td>
+        ''')
+        table.add_slot('body-cell-asin', r'''
+            <q-td :props="props">
+                <a :href="'https://amazon.com/dp/' + props.row.asin" target="_blank"
+                   class="text-primary" style="text-decoration:none">
+                    {{ props.row.asin }} <q-icon name="open_in_new" size="12px" class="q-ml-xs" />
+                </a>
+            </q-td>
+        ''')
 
         # --- Delete button column (first column) ---
         if is_editable:
@@ -850,11 +805,14 @@ def competitor_table(
 
             table.on('fieldchange', _handle_field_change)
 
-        # --- Drag-and-drop column reorder ---
+        # --- Drag-and-drop column reorder (Vue template — no window refs!) ---
+        # Merge column's headerStyle with our grab-cursor / position styles
+        # so that width definitions from Python aren't overridden.
         table.add_slot('header-cell', r'''
             <q-th :props="props"
+                  :data-col="props.col.name"
                   draggable="true"
-                  :style="{cursor: 'grab', userSelect: 'none'}"
+                  :style="'cursor:grab;user-select:none;position:relative;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' + (props.col.headerStyle || '')"
                   @dragstart="e => {
                       e.dataTransfer.effectAllowed = 'move';
                       e.dataTransfer.setData('text/plain', props.col.name);
@@ -899,6 +857,182 @@ def competitor_table(
             )
 
         table.on("colreorder", _handle_col_reorder)
+
+        # --- Column resize: inject handles + event handlers via pure JS ---
+        # (Cannot use window refs in Vue 3 sandboxed templates, so all
+        #  resize logic lives in JS injected after the table renders.)
+        _resize_js = r'''
+(function() {
+    /* ---- CSS (injected once) ---- */
+    if (!document.getElementById("col-resize-css")) {
+        var s = document.createElement("style");
+        s.id = "col-resize-css";
+        s.textContent = [
+            ".col-resize-handle {",
+            "  position:absolute; right:-3px; top:0; bottom:0;",
+            "  width:7px; cursor:col-resize; z-index:10;",
+            "  transition: background 0.15s;",
+            "}",
+            ".col-resize-handle:hover,",
+            ".col-resize-handle.active {",
+            "  background: rgba(160,137,104,0.5);",
+            "}"
+        ].join("\n");
+        document.head.appendChild(s);
+    }
+
+    /* ---- Document-level mouse handlers (once) ---- */
+    if (!window.__colResizeInit) {
+        window.__colResizeInit = true;
+        window.__colResizing = false;
+
+        document.addEventListener("mousemove", function(e) {
+            if (!window.__colResizing || !window.__resizeTh) return;
+            e.preventDefault();
+            var delta = e.clientX - window.__resizeStartX;
+            var newW = Math.max(40, window.__resizeStartW + delta);
+            window.__resizeTh.style.width = newW + "px";
+            window.__resizeTh.style.minWidth = newW + "px";
+        });
+
+        document.addEventListener("mouseup", function() {
+            if (!window.__colResizing) return;
+            window.__colResizing = false;
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            if (window.__resizeHandle) {
+                window.__resizeHandle.classList.remove("active");
+                window.__resizeHandle = null;
+            }
+            /* Save all column widths & recalculate table width */
+            var widths = {};
+            var totalW = 0;
+            var tableEl = null;
+            document.querySelectorAll("th[data-col]").forEach(function(th) {
+                var w = th.offsetWidth;
+                widths[th.getAttribute("data-col")] = w;
+                totalW += w;
+                if (!tableEl) tableEl = th.closest("table");
+            });
+            if (tableEl) {
+                var cw = (tableEl.parentElement || tableEl).clientWidth || 800;
+                tableEl.style.width = Math.max(totalW, cw) + "px";
+            }
+            localStorage.setItem("WIDTHS_KEY", JSON.stringify(widths));
+            window.__resizeTh = null;
+        });
+    }
+
+    /* ---- Core: attach handles & apply widths ---- */
+    function attachHandles() {
+        var ths = document.querySelectorAll("th[data-col]");
+        if (ths.length === 0) return false;
+
+        /* Set table-layout:fixed on the <table> element */
+        var tableEl = ths[0].closest("table");
+        if (tableEl) {
+            tableEl.style.tableLayout = "fixed";
+        }
+
+        /* Load saved widths or use defaults */
+        var saved = {};
+        try { saved = JSON.parse(localStorage.getItem("WIDTHS_KEY") || "{}"); } catch(e) {}
+        var defaults = DEFAULTS_JSON;
+
+        /* Apply widths & calculate total */
+        var totalW = 0;
+        ths.forEach(function(th) {
+            var col = th.getAttribute("data-col");
+            var w = saved[col] || defaults[col] || 100;
+            th.style.width = w + "px";
+            th.style.minWidth = w + "px";
+            totalW += w;
+        });
+
+        /* Set table width = sum of columns (min: container width) */
+        if (tableEl) {
+            var cw = (tableEl.parentElement || tableEl).clientWidth || 800;
+            tableEl.style.width = Math.max(totalW, cw) + "px";
+        }
+
+        /* Inject resize-handle divs on headers that don't have one yet */
+        ths.forEach(function(th) {
+            if (th.querySelector(".col-resize-handle")) return;
+            th.style.position = "relative";
+            var handle = document.createElement("div");
+            handle.className = "col-resize-handle";
+            handle.draggable = false;
+            handle.addEventListener("mousedown", function(e) {
+                e.stopPropagation();
+                e.preventDefault();
+                window.__colResizing = true;
+                window.__resizeTh = th;
+                window.__resizeHandle = handle;
+                handle.classList.add("active");
+                window.__resizeStartX = e.clientX;
+                window.__resizeStartW = th.offsetWidth;
+                document.body.style.cursor = "col-resize";
+                document.body.style.userSelect = "none";
+            });
+            th.appendChild(handle);
+        });
+
+        return true;
+    }
+
+    /* ---- Retry until table headers are in the DOM ---- */
+    var _att = 0;
+    function tryAttach() {
+        if (attachHandles()) return;
+        if (++_att < 20) setTimeout(tryAttach, 300);
+    }
+    tryAttach();
+
+    /* ---- MutationObserver: re-attach after Quasar re-renders ---- */
+    var _debounce = null;
+    var obs = new MutationObserver(function() {
+        if (_debounce) clearTimeout(_debounce);
+        _debounce = setTimeout(function() {
+            var ths = document.querySelectorAll("th[data-col]");
+            var need = false;
+            ths.forEach(function(th) {
+                if (!th.querySelector(".col-resize-handle")) need = true;
+            });
+            if (need && ths.length > 0) attachHandles();
+        }, 250);
+    });
+    var root = document.querySelector(".q-table__container") || document.body;
+    obs.observe(root, { childList: true, subtree: true });
+})();
+        '''.replace('WIDTHS_KEY', _COL_WIDTHS_KEY).replace(
+            'DEFAULTS_JSON', json.dumps(_DEFAULT_COL_WIDTHS),
+        )
+        # Inject after a short delay; the JS itself retries up to 6 seconds
+        ui.timer(0.3, lambda: ui.run_javascript(_resize_js), once=True)
+
+        # --- Reset layout helper (column order, widths, visibility) ---
+        def _reset_table_layout():
+            visible_cols.clear()
+            visible_cols.extend(list(_TOGGLEABLE_COLS))
+            for cb_name, cb_ref in _col_checkboxes.items():
+                cb_ref.value = True
+            table._props["columns"] = list(columns)
+            _sync_visible_cols()
+            _djs = json.dumps(_DEFAULT_COL_WIDTHS)
+            ui.run_javascript(
+                'localStorage.removeItem("' + _COL_ORDER_KEY + '");'
+                'localStorage.removeItem("' + _COL_WIDTHS_KEY + '");'
+                'localStorage.removeItem("' + _SORT_KEY + '");'
+                'localStorage.removeItem("' + _VIS_COLS_KEY + '");'
+                'var d=' + _djs + ';var tot=0;'
+                'document.querySelectorAll("th[data-col]").forEach(function(t){'
+                'var c=t.getAttribute("data-col"),w=d[c]||100;'
+                't.style.width=w+"px";t.style.minWidth=w+"px";tot+=w;'
+                '});'
+                'var tb=document.querySelector("table");'
+                'if(tb){var cw=tb.parentElement?tb.parentElement.clientWidth:800;'
+                'tb.style.width=Math.max(tot,cw)+"px";}'
+            )
 
         # --- Restore saved column order and sort from localStorage ---
         async def _restore_table_settings():

@@ -6,6 +6,7 @@ from sqlalchemy import func
 
 from src.models.database import get_session
 from src.models.category import Category
+from src.ui.components.helpers import HOVER_BG, NAV_ACTIVE_BG, NAV_ACTIVE_BORDER, NAV_ACTIVE_TEXT
 
 # Serve the public directory for static assets (logo, images)
 _PUBLIC_DIR = Path(__file__).resolve().parent.parent.parent / "public"
@@ -16,37 +17,37 @@ _nav_categories_refreshable = None
 
 
 # JavaScript to highlight the current sidebar nav link on page load.
-_ACTIVE_NAV_JS = """
-(function() {
+_ACTIVE_NAV_JS = f"""
+(function() {{
     var path = window.location.pathname;
     var search = window.location.search;
     var full = path + search;
     var links = document.querySelectorAll('.q-drawer a[href]');
-    links.forEach(function(a) {
+    links.forEach(function(a) {{
         var href = a.getAttribute('href');
         var isActive = false;
-        if (href.indexOf('?') !== -1) {
+        if (href.indexOf('?') !== -1) {{
             isActive = (full === href);
-        } else if (href === '/') {
+        }} else if (href === '/') {{
             isActive = (path === '/');
-        } else if (href === '/products') {
+        }} else if (href === '/products') {{
             isActive = (path === '/products' && search === '');
-        } else {
+        }} else {{
             isActive = path.startsWith(href);
-        }
-        if (isActive) {
+        }}
+        if (isActive) {{
             var row = a.querySelector('.row, .q-item');
-            if (row) {
-                row.style.background = '#E8E0D6';
-                row.style.borderLeft = '3px solid #A08968';
-            }
-            a.querySelectorAll('.text-secondary').forEach(function(child) {
-                child.style.color = '#4A4443';
+            if (row) {{
+                row.style.background = '{NAV_ACTIVE_BG}';
+                row.style.borderLeft = '3px solid {NAV_ACTIVE_BORDER}';
+            }}
+            a.querySelectorAll('.text-secondary').forEach(function(child) {{
+                child.style.color = '{NAV_ACTIVE_TEXT}';
                 child.style.fontWeight = '600';
-            });
-        }
-    });
-})();
+            }});
+        }}
+    }});
+}})();
 """
 
 
@@ -112,7 +113,7 @@ def build_layout(title: str = "Verlumen Market Research"):
     ui.timer(0.1, lambda: ui.run_javascript(_ACTIVE_NAV_JS), once=True)
 
     # Main content container
-    content = ui.column().classes("w-full p-4 max-w-7xl mx-auto gap-4")
+    content = ui.column().classes("w-full p-6 max-w-7xl mx-auto gap-4")
     return content
 
 
@@ -189,7 +190,7 @@ def _render_nav_node(node, depth=0):
     with ui.link(target=f"/products?category_id={node['id']}").classes("no-underline w-full"):
         with ui.row().classes(
             "items-center gap-2 px-3 py-1 rounded w-full "
-            "hover:bg-blue-50 cursor-pointer"
+            f"{HOVER_BG} cursor-pointer"
         ).style(f"min-height: 28px; padding-left: {indent}px"):
             icon = "folder" if node["children"] else "label"
             ui.icon(icon, size="xs").classes("text-accent")
@@ -208,7 +209,7 @@ def _nav_link(label: str, icon: str, path: str):
     with ui.link(target=path).classes("no-underline w-full"):
         with ui.row().classes(
             "items-center gap-3 px-4 py-2 rounded-lg w-full "
-            "hover:bg-blue-50 cursor-pointer"
+            f"{HOVER_BG} cursor-pointer"
         ):
             ui.icon(icon).classes("text-secondary")
             ui.label(label).classes("text-body1 text-secondary")

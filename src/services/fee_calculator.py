@@ -4,13 +4,13 @@ Estimates referral fees, FBA fulfillment fees, and monthly storage costs
 to provide realistic profit margins.
 
 Fee schedule source: Amazon Seller Central Fee Schedule
-Last updated: 2025 Q4 (effective Jan 15, 2025 -- Dec 31, 2026)
-Rates reflect the 2025-2026 Amazon FBA fee structure including
-inbound placement service fees and aged inventory surcharges.
+Updated: 2026-Q1 (effective Jan 15, 2026)
+Rates reflect the 2026 Amazon FBA fee structure including price-tiered
+fulfillment fees, updated storage rates, and new bulky tiers.
 """
 
 # Fee version identifier -- update whenever fee tables are refreshed
-FEE_VERSION = "2025-Q4"
+FEE_VERSION = "2026-Q1"
 
 
 def get_fee_version() -> str:
@@ -18,7 +18,10 @@ def get_fee_version() -> str:
     return FEE_VERSION
 
 
-# Amazon referral fee percentages by category slug (2025-2026 rates)
+# ---------------------------------------------------------------------------
+# Referral fees by category (2026 rates — unchanged from 2025)
+# ---------------------------------------------------------------------------
+
 _REFERRAL_FEES: dict[str, float] = {
     "toys-and-games": 0.15,
     "baby": 0.08,
@@ -54,34 +57,69 @@ _REFERRAL_FEES: dict[str, float] = {
 
 _DEFAULT_REFERRAL_FEE = 0.15
 
-# FBA fulfillment fees by size tier (2025-2026 rates, effective Jan 15 2025)
-_FBA_FEES: dict[str, float] = {
-    "small-standard": 3.06,          # Small standard, up to 2oz-6oz range
-    "small-standard-heavy": 3.68,    # Small standard, 12oz-16oz
-    "large-standard": 4.99,          # Large standard, up to 0.5lb
-    "large-standard-1lb": 5.60,      # Large standard, 0.5-1lb
-    "large-standard-2lb": 6.62,      # Large standard, 1-2lb
-    "large-standard-3lb": 7.17,      # Large standard, 2-3lb
-    "large-standard-heavy": 7.72,    # Large standard, 3-20lb (base + $0.16/half-lb above 3lb)
-    "small-oversize": 9.73,          # Small oversize
-    "medium-oversize": 19.05,        # Medium oversize
-    "large-oversize": 89.98,         # Large oversize
-    "special-oversize": 158.49,      # Special oversize
-}
 
-# Monthly storage fee per cubic foot (2025-2026 rates)
+# ---------------------------------------------------------------------------
+# FBA fulfillment fees (2026, effective Jan 15, 2026)
+# Price-tiered: <$10, $10-$50, >$50
+# Source: sellerapp.com/blog/amazon-fba-fees-calculator-guide/
+# ---------------------------------------------------------------------------
+
+# Small Standard-Size: (max_weight_oz, fee_under_10, fee_10_50, fee_over_50)
+_SMALL_STANDARD_FEES: list[tuple[float, float, float, float]] = [
+    (2,  2.43, 3.32, 3.58),
+    (4,  2.49, 3.42, 3.68),
+    (6,  2.56, 3.45, 3.71),
+    (8,  2.66, 3.54, 3.80),
+    (10, 2.77, 3.68, 3.94),
+    (12, 2.82, 3.78, 4.04),
+    (14, 2.92, 3.91, 4.17),
+    (16, 2.95, 3.96, 4.22),
+]
+
+# Large Standard-Size: (max_weight_oz, fee_under_10, fee_10_50, fee_over_50)
+# For 3-20lb: base + $0.08 per 4oz above 3lb
+_LARGE_STANDARD_FEES: list[tuple[float, float, float, float]] = [
+    (4,  2.91, 3.73, 3.99),
+    (8,  3.13, 3.95, 4.21),
+    (12, 3.38, 4.20, 4.46),
+    (16, 3.78, 4.60, 4.86),
+    (20, 4.22, 5.04, 5.30),   # 1-1.25 lb
+    (24, 4.60, 5.42, 5.68),   # 1.25-1.5 lb
+    (28, 4.75, 5.57, 5.83),   # 1.5-1.75 lb
+    (32, 5.00, 5.82, 6.08),   # 1.75-2 lb
+    (36, 5.10, 5.92, 6.18),   # 2-2.25 lb
+    (40, 5.28, 6.10, 6.36),   # 2.25-2.5 lb
+    (44, 5.44, 6.26, 6.52),   # 2.5-2.75 lb
+    (48, 5.85, 6.67, 6.93),   # 2.75-3 lb
+]
+# 3-20lb base fees (+ $0.08 per 4oz above 3lb)
+_LARGE_STANDARD_HEAVY_BASE = (6.15, 6.97, 7.23)  # (under_10, 10_50, over_50)
+_LARGE_STANDARD_HEAVY_PER_4OZ = 0.08
+
+# Large Bulky: base + $0.38/lb above first lb
+_LARGE_BULKY_BASE = 8.58
+_LARGE_BULKY_PER_LB = 0.38
+
+# Extra-Large: $25.56 base for 0-50lb
+_EXTRA_LARGE_BASE = 25.56
+_EXTRA_LARGE_PER_LB = 0.38
+
+# Monthly storage fee per cubic foot (2026 rates)
 _STORAGE_FEE_STANDARD = 0.87   # Standard size, Jan-Sep
 _STORAGE_FEE_PEAK = 2.40       # Standard size, Oct-Dec (peak season)
 
 # Aged inventory surcharge (per cubic foot, assessed monthly)
-_AGED_INVENTORY_SURCHARGE_271_365 = 6.90   # 271-365 days
-_AGED_INVENTORY_SURCHARGE_365_PLUS = 6.90  # 365+ days (same base, may stack)
+_AGED_INVENTORY_SURCHARGE_12_15M = 6.90   # 12-15 months ($0.30/unit or $6.90/ft³)
+_AGED_INVENTORY_SURCHARGE_15M_PLUS = 7.90  # 15+ months ($0.35/unit or $7.90/ft³)
 
 # Default PPC advertising cost as percentage of selling price
 _DEFAULT_PPC_PCT = 0.10
 
 # Default shipping cost per unit (Alibaba -> Amazon FBA warehouse)
 _DEFAULT_SHIPPING = 3.00
+
+# Default duties suggestion for China imports (Section 301 + IEEPA tariffs)
+DEFAULT_DUTIES_PCT_CHINA = 25.0
 
 
 def calculate_fees(
@@ -126,7 +164,7 @@ def calculate_fees(
     referral_fee = round(selling_price * referral_pct, 2)
 
     # FBA fulfillment fee
-    fba_fee = _get_fba_fee(size_tier, weight_lbs)
+    fba_fee = _get_fba_fee(size_tier, weight_lbs, selling_price)
 
     # Storage fee (assume 0.5 cubic foot per unit as default estimate)
     storage_fee = round(_STORAGE_FEE_STANDARD * 0.5, 2) if include_storage else 0.0
@@ -165,35 +203,272 @@ def available_categories() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Size tier & dimension helpers
+# ---------------------------------------------------------------------------
+
+# Packaging weight estimates (lbs)
+_PACKAGING_WEIGHT_STANDARD = 0.25
+_PACKAGING_WEIGHT_OVERSIZE = 1.0
+
+# Map display size tier names → internal tier key for _get_fba_fee
+_SIZE_TIER_FEE_MAP = {
+    "Small Standard-Size": "small-standard",
+    "Large Standard-Size": "large-standard",
+    "Large Bulky": "large-bulky",
+    "Extra-Large": "extra-large",
+}
+
+
+def detect_size_tier(
+    length_in: float, width_in: float, height_in: float, weight_lbs: float,
+) -> str:
+    """Auto-detect Amazon FBA size tier from dimensions and weight.
+
+    Uses 2026 Amazon FBA size tier thresholds.
+    """
+    dims = sorted([length_in, width_in, height_in], reverse=True)
+    longest, median, shortest = dims
+
+    if longest <= 15 and median <= 12 and shortest <= 0.75 and weight_lbs <= 1.0:
+        return "Small Standard-Size"
+    if longest <= 18 and median <= 14 and shortest <= 8 and weight_lbs <= 20:
+        return "Large Standard-Size"
+    if longest <= 59 and median <= 33 and shortest <= 33 and weight_lbs <= 50:
+        return "Large Bulky"
+    return "Extra-Large"
+
+
+def calculate_outbound_shipping_weight(
+    weight_lbs: float,
+    size_tier: str,
+    length_in: float = 0,
+    width_in: float = 0,
+    height_in: float = 0,
+) -> float:
+    """Calculate outbound shipping weight.
+
+    Amazon uses the *greater* of (unit weight + packaging) or dimensional weight.
+    Dimensional weight = L x W x H / 139 (standard) or / 166 (oversize).
+    """
+    if "bulky" in size_tier.lower() or "extra" in size_tier.lower():
+        pkg_weight = weight_lbs + _PACKAGING_WEIGHT_OVERSIZE
+        dim_weight = (length_in * width_in * height_in) / 166
+    else:
+        pkg_weight = weight_lbs + _PACKAGING_WEIGHT_STANDARD
+        dim_weight = (length_in * width_in * height_in) / 139
+    return round(max(pkg_weight, dim_weight), 2)
+
+
+def calculate_cubic_feet(
+    length_in: float, width_in: float, height_in: float,
+) -> float:
+    """Calculate volume in cubic feet from dimensions in inches."""
+    return round((length_in * width_in * height_in) / 1728, 4)
+
+
+def calculate_storage_fee(
+    cubic_feet: float, months: float = 1.0, season: str = "jan_sep",
+) -> float:
+    """Calculate monthly storage fee.
+
+    Parameters
+    ----------
+    season : str
+        ``"jan_sep"`` for standard rate, ``"oct_dec"`` for peak rate.
+    """
+    rate = _STORAGE_FEE_STANDARD if season == "jan_sep" else _STORAGE_FEE_PEAK
+    return round(cubic_feet * months * rate, 2)
+
+
+def calculate_freight_cost_per_unit(
+    length_in: float,
+    width_in: float,
+    height_in: float,
+    freight_mode: str = "per_cbm",
+    freight_rate: float = 400.0,
+) -> float:
+    """Calculate freight cost per unit.
+
+    Parameters
+    ----------
+    freight_mode : str
+        ``"per_cbm"`` — rate is $/m³; ``"per_unit"`` — rate is direct $/unit.
+    freight_rate : float
+        Dollar amount per cubic meter **or** per unit.
+    """
+    if freight_mode == "per_unit":
+        return round(freight_rate, 2)
+    # Convert inches → meters (1 in = 0.0254 m)
+    vol_m3 = (length_in * 0.0254) * (width_in * 0.0254) * (height_in * 0.0254)
+    return round(vol_m3 * freight_rate, 2)
+
+
+def _map_size_tier_to_key(display_tier: str) -> str:
+    """Map display size tier string to internal fee lookup key."""
+    return _SIZE_TIER_FEE_MAP.get(display_tier, "large-standard")
+
+
+def calculate_detailed_profitability(
+    price: float,
+    unit_cost: float,
+    length_in: float,
+    width_in: float,
+    height_in: float,
+    weight_lbs: float,
+    category: str = "toys-and-games",
+    freight_mode: str = "per_cbm",
+    freight_rate: float = 400.0,
+    storage_months: float = 1.0,
+    duties_mode: str = "percent",
+    duties_value: float = 0.0,
+    other_mode: str = "percent",
+    other_value: float = 0.0,
+) -> dict:
+    """Full Helium-10-style profitability breakdown with seasonal results.
+
+    Returns a dict with size_tier, outbound_weight, cubic_feet,
+    unit_freight_cost, fba_fee, referral_fee, storage per season,
+    duties/other costs, and net/margin/roi for Jan-Sep & Oct-Dec.
+    """
+    # Ensure valid minimums
+    price = max(price, 0)
+    unit_cost = max(unit_cost, 0)
+    length_in = max(length_in, 0)
+    width_in = max(width_in, 0)
+    height_in = max(height_in, 0)
+    weight_lbs = max(weight_lbs, 0)
+
+    # 1. Size tier
+    size_tier = detect_size_tier(length_in, width_in, height_in, weight_lbs)
+
+    # 2. Outbound shipping weight
+    outbound_weight = calculate_outbound_shipping_weight(
+        weight_lbs, size_tier, length_in, width_in, height_in,
+    )
+
+    # 3. Cubic feet (for storage)
+    cubic_feet = calculate_cubic_feet(length_in, width_in, height_in)
+
+    # 4. FBA fulfillment fee (now price-aware)
+    fba_fee = _get_fba_fee(
+        _map_size_tier_to_key(size_tier), outbound_weight, price,
+    )
+
+    # 5. Referral fee
+    referral_pct = _REFERRAL_FEES.get(category, _DEFAULT_REFERRAL_FEE)
+    referral_fee = round(price * referral_pct, 2)
+
+    # 6. Freight cost per unit
+    unit_freight = calculate_freight_cost_per_unit(
+        length_in, width_in, height_in, freight_mode, freight_rate,
+    )
+
+    # 7. Storage fees (seasonal)
+    storage_jan_sep = calculate_storage_fee(cubic_feet, storage_months, "jan_sep")
+    storage_oct_dec = calculate_storage_fee(cubic_feet, storage_months, "oct_dec")
+
+    # 8. Duties & tariffs
+    if duties_mode == "percent":
+        duties_cost = round(price * duties_value / 100, 2)
+    else:
+        duties_cost = round(duties_value, 2)
+
+    # 9. Other costs
+    if other_mode == "percent":
+        other_cost = round(price * other_value / 100, 2)
+    else:
+        other_cost = round(other_value, 2)
+
+    # 10. Total costs per season
+    base_costs = unit_cost + unit_freight + fba_fee + referral_fee + duties_cost + other_cost
+    total_jan_sep = round(base_costs + storage_jan_sep, 2)
+    total_oct_dec = round(base_costs + storage_oct_dec, 2)
+
+    # 11. Net profit
+    net_jan_sep = round(price - total_jan_sep, 2)
+    net_oct_dec = round(price - total_oct_dec, 2)
+
+    # 12. Margin & ROI
+    margin_jan_sep = round((net_jan_sep / price) * 100, 2) if price > 0 else 0.0
+    margin_oct_dec = round((net_oct_dec / price) * 100, 2) if price > 0 else 0.0
+    total_investment = unit_cost + unit_freight + duties_cost + other_cost
+    roi_jan_sep = round((net_jan_sep / total_investment) * 100, 2) if total_investment > 0 else 0.0
+    roi_oct_dec = round((net_oct_dec / total_investment) * 100, 2) if total_investment > 0 else 0.0
+
+    return {
+        "size_tier": size_tier,
+        "outbound_weight": outbound_weight,
+        "cubic_feet": cubic_feet,
+        "unit_freight_cost": unit_freight,
+        "fba_fee": fba_fee,
+        "referral_fee": referral_fee,
+        "referral_pct": referral_pct,
+        "storage_jan_sep": storage_jan_sep,
+        "storage_oct_dec": storage_oct_dec,
+        "duties_cost": duties_cost,
+        "other_cost": other_cost,
+        "total_costs_jan_sep": total_jan_sep,
+        "total_costs_oct_dec": total_oct_dec,
+        "net_jan_sep": net_jan_sep,
+        "net_oct_dec": net_oct_dec,
+        "margin_jan_sep": margin_jan_sep,
+        "margin_oct_dec": margin_oct_dec,
+        "roi_jan_sep": roi_jan_sep,
+        "roi_oct_dec": roi_oct_dec,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _get_fba_fee(size_tier: str, weight_lbs: float) -> float:
-    """Determine FBA fulfillment fee from size tier and weight (2025-2026 rates)."""
+def _price_tier_index(price: float) -> int:
+    """Return 0 for <$10, 1 for $10-$50, 2 for >$50."""
+    if price < 10:
+        return 0
+    if price <= 50:
+        return 1
+    return 2
+
+
+def _get_fba_fee(size_tier: str, weight_lbs: float, price: float = 25.0) -> float:
+    """Determine FBA fulfillment fee from size tier, weight, and price.
+
+    Uses 2026 price-tiered fee schedule (effective Jan 15, 2026).
+    """
     tier = size_tier.lower().strip()
+    pt = _price_tier_index(price)
+    weight_oz = weight_lbs * 16
 
-    # Auto-detect standard tier based on weight
-    if tier == "standard":
-        if weight_lbs <= 0.75:
-            # Small standard size (up to ~12oz)
-            return _FBA_FEES["small-standard"]
-        elif weight_lbs <= 1.0:
-            return _FBA_FEES["large-standard-1lb"]
-        elif weight_lbs <= 2.0:
-            return _FBA_FEES["large-standard-2lb"]
-        elif weight_lbs <= 3.0:
-            return _FBA_FEES["large-standard-3lb"]
-        else:
-            # 3-20lb: base fee + per-half-lb surcharge above 3lb
-            base = _FBA_FEES["large-standard-heavy"]
-            extra_half_lbs = max(0, (weight_lbs - 3.0) / 0.5)
-            return round(base + extra_half_lbs * 0.16, 2)
+    # Small Standard-Size
+    if tier == "small-standard":
+        for max_oz, f_low, f_mid, f_high in _SMALL_STANDARD_FEES:
+            if weight_oz <= max_oz:
+                return (f_low, f_mid, f_high)[pt]
+        # Over 16oz shouldn't happen for small standard, but fallback
+        return _SMALL_STANDARD_FEES[-1][1 + pt]
 
-    # Explicit tier names
-    if tier in _FBA_FEES:
-        return _FBA_FEES[tier]
+    # Large Standard-Size
+    if tier in ("large-standard", "standard"):
+        # Check fixed weight bands (up to 3 lb / 48 oz)
+        for max_oz, f_low, f_mid, f_high in _LARGE_STANDARD_FEES:
+            if weight_oz <= max_oz:
+                return (f_low, f_mid, f_high)[pt]
+        # 3-20 lb: base + $0.08 per 4oz above 3 lb
+        base = _LARGE_STANDARD_HEAVY_BASE[pt]
+        extra_4oz = max(0, (weight_oz - 48)) / 4
+        return round(base + extra_4oz * _LARGE_STANDARD_HEAVY_PER_4OZ, 2)
 
-    return _FBA_FEES.get("large-standard", 4.99)
+    # Large Bulky
+    if tier in ("large-bulky", "small-oversize"):
+        return round(_LARGE_BULKY_BASE + max(0, weight_lbs - 1) * _LARGE_BULKY_PER_LB, 2)
+
+    # Extra-Large
+    if tier in ("extra-large", "large-oversize", "medium-oversize", "special-oversize"):
+        return round(_EXTRA_LARGE_BASE + max(0, weight_lbs - 1) * _EXTRA_LARGE_PER_LB, 2)
+
+    # Fallback: use large standard mid-tier
+    return _LARGE_STANDARD_FEES[4][2]  # ~1lb, $10-$50 tier
 
 
 def _zero_result() -> dict:

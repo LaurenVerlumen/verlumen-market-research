@@ -1,7 +1,7 @@
 """Product summary card component."""
 from nicegui import ui
 
-from src.ui.components.helpers import avatar_color as _avatar_color, format_price as _format_price
+from src.ui.components.helpers import avatar_color as _avatar_color, format_price as _format_price, CARD_CLASSES
 
 
 def product_card(product: dict, on_search=None):
@@ -17,7 +17,7 @@ def product_card(product: dict, on_search=None):
     comp_count = product.get("competitor_count", 0)
     name = product.get("name", "Unnamed")
 
-    with ui.card().classes("w-full p-4"):
+    with ui.card().classes(CARD_CLASSES):
         with ui.row().classes("items-start justify-between w-full gap-4"):
             # Thumbnail / avatar
             if product.get("alibaba_image_url"):

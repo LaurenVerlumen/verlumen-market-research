@@ -22,6 +22,7 @@ from src.services.utils import parse_bought
 from src.ui.components.helpers import (
     avatar_color as _avatar_color, product_image_src as _product_image_src,
     format_price as _format_price, STATUS_COLORS as _STATUS_COLORS, STATUS_LABELS as _STATUS_LABELS,
+    section_header, product_thumbnail as _product_thumbnail,
 )
 from src.services.viability_scorer import calculate_vvs
 from src.services.brand_moat import compute_brand_concentration
@@ -193,6 +194,7 @@ def product_detail_page(product_id: int):
             with ui.tabs().classes("w-full") as tabs:
                 overview_tab = ui.tab("Overview", icon="info")
                 competitors_tab = ui.tab("Competitors", icon="groups")
+                profitability_tab = ui.tab("Profitability", icon="calculate")
                 analysis_tab = ui.tab("Analysis", icon="analytics")
                 reviews_tab = ui.tab("Reviews", icon="rate_review")
                 history_tab = ui.tab("History", icon="history")
@@ -219,6 +221,12 @@ def product_detail_page(product_id: int):
                     )
 
                 # ============================================================
+                # PROFITABILITY TAB
+                # ============================================================
+                with ui.tab_panel(profitability_tab):
+                    _render_profitability_tab(product, latest_session)
+
+                # ============================================================
                 # ANALYSIS TAB
                 # ============================================================
                 with ui.tab_panel(analysis_tab):
@@ -234,7 +242,7 @@ def product_detail_page(product_id: int):
                 # HISTORY TAB
                 # ============================================================
                 with ui.tab_panel(history_tab):
-                    _render_history_tab(all_sessions, product_id)
+                    _render_history_tab(all_sessions, product_id, product)
 
         finally:
             session.close()
@@ -249,7 +257,7 @@ def _render_overview_tab(product, product_id, session,
     """Render the Overview tab: product info card + decision log."""
 
     # Product info card with image
-    with ui.card().classes("w-full p-4"):
+    with ui.card().classes("w-full p-5"):
         with ui.row().classes("items-start gap-6 w-full"):
             # Product image / avatar placeholder
             with ui.column().classes("items-center gap-1").style("flex-shrink:0"):
@@ -467,7 +475,7 @@ def _render_overview_tab(product, product_id, session,
                                     search_query_input.value = q
                                     query_suggestions_row.clear()
                                 ui.chip(s, on_click=_use).props(
-                                    "clickable outline color=primary"
+                                    "clickable outlined color=primary"
                                 )
 
                 # --- Notes textarea ---
@@ -509,9 +517,9 @@ def _render_overview_tab(product, product_id, session,
     # --- Decision Log ---
     _decision_log_entries = json.loads(product.decision_log or "[]")
 
-    with ui.card().classes("w-full p-4"):
+    with ui.card().classes("w-full p-5"):
         with ui.row().classes("items-center gap-2 w-full"):
-            ui.icon("history").classes("text-primary text-h6")
+            ui.icon("history").classes("text-accent text-h6")
             ui.label("Decision Log").classes("text-subtitle1 font-bold")
             ui.space()
 
@@ -610,7 +618,7 @@ def _render_ai_brief_section(product, product_id):
         brief_container = ui.column().classes("w-full gap-2")
         brief_btn = ui.button(
             "Generate AI Brief", icon="auto_awesome",
-        ).props("color=primary outline")
+        ).props("outlined color=primary")
         brief_spinner = ui.spinner("dots", size="lg").classes("hidden")
 
         async def _generate_brief():
@@ -757,6 +765,7 @@ def _render_brief_content(brief: dict):
 def _render_competitors_tab(product, product_id, session, latest_session,
                             _product_dept, _product_name, _query_suffix=""):
     """Render the Competitors tab: research controls, stats, competitor table."""
+    _product_thumbnail(product)
 
     # We need search_query_input accessible by _rerun_research.
     # Build a simple mutable container for the query value.
@@ -985,8 +994,8 @@ def _render_competitors_tab(product, product_id, session, latest_session,
 
     # --- No research data yet ---
     if not latest_session:
-        with ui.card().classes("w-full p-4"):
-            ui.label("Amazon Competition Analysis").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes("w-full p-5"):
+            section_header("Amazon Competition Analysis", icon="groups")
             ui.label(
                 "No research data yet. Run Amazon Research or import a Helium 10 Xray file."
             ).classes("text-body2 text-secondary")
@@ -1078,6 +1087,7 @@ def _render_competitors_tab(product, product_id, session, latest_session,
 
     # Metrics header with re-research + Xray upload buttons
     with ui.row().classes("items-center gap-4 w-full"):
+        ui.icon("groups").classes("text-accent")
         ui.label("Amazon Competition Analysis").classes("text-subtitle1 font-bold")
         _mp_options = {d: info["label"] for d, info in AMAZON_MARKETPLACES.items()}
         marketplace_select = ui.select(
@@ -1453,8 +1463,9 @@ def _render_competitors_tab(product, product_id, session, latest_session,
 
 def _render_analysis_tab(product, latest_session):
     """Render the Analysis tab: VVS banner, brand landscape, profit analysis, AI insights."""
+    _product_thumbnail(product)
     if not latest_session:
-        with ui.card().classes("w-full p-4"):
+        with ui.card().classes("w-full p-5"):
             ui.icon("analytics").classes("text-secondary text-h4")
             ui.label("No research data yet.").classes("text-subtitle1 font-bold mt-2")
             ui.label(
@@ -1516,9 +1527,6 @@ def _render_analysis_tab(product, latest_session):
         if comps:
             _render_brand_concentration(comp_data)
 
-        # --- Profit Analysis card ---
-        _render_profit_analysis(product, comps if comps else [])
-
         # --- AI Insights card ---
         _render_ai_insights(product, comps if comps else [])
 
@@ -1529,10 +1537,12 @@ def _render_analysis_tab(product, latest_session):
         db.close()
 
 
-def _render_history_tab(all_sessions, product_id):
+def _render_history_tab(all_sessions, product_id, product=None):
     """Render the History tab: timeline chart + session list."""
+    if product:
+        _product_thumbnail(product)
     if not all_sessions:
-        with ui.card().classes("w-full p-4"):
+        with ui.card().classes("w-full p-5"):
             ui.icon("history").classes("text-secondary text-h4")
             ui.label("No research sessions yet.").classes("text-subtitle1 font-bold mt-2")
             ui.label(
@@ -1554,8 +1564,8 @@ def _render_history_tab(all_sessions, product_id):
         comps = [t["competitor_count"] for t in timeline]
         ratings = [round(t["avg_rating"], 1) if t.get("avg_rating") else None for t in timeline]
 
-        with ui.card().classes("w-full p-4 mb-4"):
-            ui.label("Trend Over Time").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes("w-full p-5"):
+            section_header("Trend Over Time", icon="show_chart")
             ui.echart({
                 "tooltip": {"trigger": "axis"},
                 "legend": {"data": ["Avg Price ($)", "Competitors", "Avg Rating"], "bottom": 0},
@@ -1609,7 +1619,7 @@ def _render_history_tab(all_sessions, product_id):
         is_latest = i == 0
         created = sess.created_at.strftime("%b %d, %Y %H:%M") if sess.created_at else "N/A"
 
-        with ui.card().classes("w-full p-4 mb-2" + (" border-l-4" if is_latest else "")).style(
+        with ui.card().classes("w-full p-5" + (" border-l-4" if is_latest else "")).style(
             "border-left-color: #A08968" if is_latest else ""
         ):
             with ui.row().classes("items-center gap-3 w-full"):
@@ -1795,9 +1805,9 @@ def _render_brand_landscape(comp_data: list[dict]):
 
     brand_rows.sort(key=lambda r: r["total_revenue"], reverse=True)
 
-    with ui.card().classes("w-full p-4 mt-4"):
+    with ui.card().classes("w-full p-5 mt-4"):
         with ui.row().classes("items-center gap-2 mb-3"):
-            ui.icon("business").classes("text-primary")
+            ui.icon("business").classes("text-accent")
             ui.label("Brand Landscape").classes("text-subtitle1 font-bold")
 
         # High concentration warning
@@ -1936,9 +1946,9 @@ def _render_brand_concentration(comp_data: list[dict]):
             "itemStyle": {"color": _type_colors.get(item["name"], "#999")},
         })
 
-    with ui.card().classes("w-full p-4 mt-4"):
+    with ui.card().classes("w-full p-5 mt-4"):
         with ui.row().classes("items-center gap-2 mb-3"):
-            ui.icon("shield").classes("text-primary")
+            ui.icon("shield").classes("text-accent")
             ui.label("Brand Moat Detector").classes("text-subtitle1 font-bold")
             ui.badge(
                 f"Score: {moat_score}/100",
@@ -2024,144 +2034,62 @@ def _render_brand_concentration(comp_data: list[dict]):
                             ui.label(text).classes("text-caption").style(f"color: {color}")
 
 
-def _render_profit_analysis(product, competitors: list):
-    """Render the Profit Analysis card if alibaba prices are set."""
-    if product.alibaba_price_min is None:
-        # Show gentle prompt for entering Alibaba cost
-        with ui.card().classes("w-full p-4 mt-4").style(
-            "border: 1px dashed #A08968; background: #faf8f5"
-        ):
-            with ui.row().classes("items-center gap-3"):
-                ui.icon("info_outline").classes("text-accent text-2xl")
-                with ui.column().classes("flex-1 gap-1"):
-                    ui.label("Enter your Alibaba cost to unlock profit analysis").classes(
-                        "text-subtitle2 font-medium"
-                    )
-                    ui.label(
-                        "Set the Alibaba price above to see profit analysis and VVS profitability score."
-                    ).classes("text-caption text-secondary")
-                with ui.row().classes("items-end gap-2"):
-                    _cost_input = ui.number(
-                        label="Alibaba Cost ($)", format="%.2f",
-                        min=0.01, step=0.01,
-                    ).props("outlined dense").classes("w-32")
+def _render_profitability_tab(product, latest_session):
+    """Render the Profitability tab: interactive Helium-10-style calculator."""
+    _product_thumbnail(product)
+    from src.ui.components.profitability_calculator import profitability_calculator
+    from src.services.fee_calculator import available_categories
 
-                    def _save_cost():
-                        val = _cost_input.value
-                        if val is not None and val > 0:
-                            db = get_session()
-                            try:
-                                p = db.query(Product).filter(Product.id == product.id).first()
-                                if p:
-                                    p.alibaba_price_min = float(val)
-                                    db.commit()
-                                    ui.notify("Alibaba cost saved! Refreshing...", type="positive")
-                                    ui.navigate.to(f"/products/{product.id}")
-                            finally:
-                                db.close()
-                        else:
-                            ui.notify("Please enter a valid cost.", type="warning")
+    # Gather competitor data for pre-population
+    competitors = []
+    if latest_session:
+        db = get_session()
+        try:
+            competitors = (
+                db.query(AmazonCompetitor)
+                .filter(AmazonCompetitor.search_session_id == latest_session.id)
+                .order_by(AmazonCompetitor.position)
+                .all()
+            )
+        finally:
+            db.close()
 
-                    ui.button("Save", icon="save", on_click=_save_cost).props(
-                        "color=accent size=sm"
-                    )
-        return
+    comp_prices = []
+    comp_weights = []
+    first_dimensions = None
+    first_size_tier = None
 
-    try:
-        from src.services.profit_calculator import calculate_profit
-    except ImportError:
-        return
-
-    if not competitors:
-        return
-
-    comp_data = []
     for c in competitors:
-        if isinstance(c, dict):
-            comp_data.append(c)
-        else:
-            try:
-                comp_data.append({
-                    "price": c.price,
-                    "bought_last_month": c.bought_last_month,
-                })
-            except Exception:
-                continue
+        if c.price and c.price > 0:
+            comp_prices.append(c.price)
+        if c.weight and c.weight > 0:
+            comp_weights.append(c.weight)
+        if c.dimensions and first_dimensions is None:
+            first_dimensions = c.dimensions
+        if c.size_tier and first_size_tier is None:
+            first_size_tier = c.size_tier
 
-    try:
-        profit = calculate_profit(
-            alibaba_price_min=product.alibaba_price_min,
-            alibaba_price_max=product.alibaba_price_max or product.alibaba_price_min,
-            amazon_competitors=comp_data,
-        )
-    except Exception:
-        return
+    median_price = sorted(comp_prices)[len(comp_prices) // 2] if comp_prices else None
+    median_weight = sorted(comp_weights)[len(comp_weights) // 2] if comp_weights else None
 
-    strategies = profit.get("strategies") or {}
-    if not strategies:
-        return
+    alibaba_cost = product.alibaba_price_min if product.alibaba_price_min is not None else None
 
-    with ui.card().classes("w-full p-4 mt-4"):
-        with ui.row().classes("items-center gap-2 mb-3"):
-            ui.icon("account_balance").classes("text-primary")
-            ui.label("Profit Analysis").classes("text-subtitle1 font-bold")
+    category_slug = "toys-and-games"
+    if hasattr(product, "category") and product.category:
+        cat_name = product.category.name.lower().replace(" ", "-").replace("&", "and")
+        cats = available_categories()
+        if cat_name in cats:
+            category_slug = cat_name
 
-        # Landed cost
-        ui.label(
-            f"Landed Cost: ${profit.get('landed_cost', 0):.2f}/unit"
-        ).classes("text-body2 text-secondary mb-2")
-
-        # Strategy cards
-        with ui.row().classes("gap-4 flex-wrap mb-4"):
-            strategy_labels = {
-                "budget": ("Budget", "#4DB6AC"),
-                "competitive": ("Competitive", "#A08968"),
-                "premium": ("Premium", "#9575CD"),
-            }
-            for key in ("budget", "competitive", "premium"):
-                s = strategies.get(key)
-                if not s:
-                    continue
-                label, color = strategy_labels[key]
-                be = profit.get("break_even_units", {}).get(key, 0)
-                monthly = profit.get("monthly_profit_estimate", {}).get(key, {})
-
-                with ui.card().classes("p-3").style(
-                    f"min-width:200px; border-left: 4px solid {color}"
-                ):
-                    ui.label(label).classes("text-caption font-bold text-uppercase")
-                    ui.label(
-                        f"${s['selling_price']:.2f}"
-                    ).classes("text-h6 font-bold").style(f"color: {color}")
-
-                    margin = s.get("profit_margin_pct", 0)
-                    margin_color = (
-                        "#006100" if margin > 30
-                        else "#9C5700" if margin >= 15
-                        else "#9C0006"
-                    )
-
-                    with ui.column().classes("gap-1 mt-2"):
-                        ui.label(
-                            f"Profit/unit: ${s['net_profit']:.2f}"
-                        ).classes("text-caption")
-                        ui.label(
-                            f"Margin: {margin:.1f}%"
-                        ).classes("text-caption font-bold").style(
-                            f"color: {margin_color}"
-                        )
-                        ui.label(
-                            f"ROI: {s.get('roi_pct', 0):.1f}%"
-                        ).classes("text-caption")
-                        if be > 0:
-                            ui.label(
-                                f"Break-even: {be} units"
-                            ).classes("text-caption text-secondary")
-                        est_monthly = monthly.get("monthly_profit", 0)
-                        if est_monthly > 0:
-                            ui.label(
-                                f"Est. monthly: ${est_monthly:,.0f}"
-                            ).classes("text-caption text-secondary")
+    profitability_calculator(
+        product_id=product.id,
+        initial_price=median_price,
+        initial_cost=alibaba_cost,
+        initial_dimensions=first_dimensions,
+        initial_weight=median_weight,
+        initial_size_tier=first_size_tier,
+        initial_category=category_slug,
+    )
 
 
 def _render_ai_insights(product, competitors: list):
@@ -2204,9 +2132,9 @@ def _render_ai_insights(product, competitors: list):
     except Exception:
         return  # Silently skip if ML fails
 
-    with ui.card().classes("w-full p-4 mt-4"):
+    with ui.card().classes("w-full p-5 mt-4"):
         with ui.row().classes("items-center gap-2 mb-3"):
-            ui.icon("auto_awesome").classes("text-primary")
+            ui.icon("auto_awesome").classes("text-accent")
             ui.label("AI Insights").classes("text-subtitle1 font-bold")
 
         # Price strategy cards
@@ -2279,6 +2207,7 @@ def _info_row(label: str, value: str, is_link: bool = False):
 
 def _render_reviews_tab(product, product_id, latest_session):
     """Render the Reviews / Pain Map tab."""
+    _product_thumbnail(product)
     if not latest_session:
         with ui.card().classes("w-full p-8 text-center"):
             ui.icon("science", size="xl").classes("text-grey-5 mb-4")
@@ -2325,7 +2254,7 @@ def _render_reviews_tab(product, product_id, latest_session):
             btn.set_visibility(True)
 
     with ui.row().classes("w-full items-center gap-4"):
-        btn = ui.button("Mine Reviews", icon="psychology", on_click=on_mine).props("color=deep-purple")
+        btn = ui.button("Mine Reviews", icon="psychology", on_click=on_mine).props("color=accent")
         spinner = ui.spinner("dots", size="lg")
         spinner.set_visibility(False)
         status_label = ui.label("")
@@ -2432,7 +2361,7 @@ def _render_heatmap(aspects: list):
 
 def _render_synthesis(synthesis: dict):
     """Render the AI synthesis section."""
-    with ui.card().classes("w-full p-4 mt-4"):
+    with ui.card().classes("w-full p-5 mt-4"):
         ui.label("AI Review Synthesis").classes("text-h6 font-medium mb-2")
 
         # Summary
@@ -2482,9 +2411,9 @@ def _render_synthesis(synthesis: dict):
 
 def _render_ppc_keywords(product, product_id, comp_data):
     """Render PPC Keyword Intelligence section in Analysis tab."""
-    with ui.card().classes("w-full p-4 mt-4"):
+    with ui.card().classes("w-full p-5 mt-4"):
         with ui.row().classes("items-center gap-2 mb-3"):
-            ui.icon("campaign").classes("text-primary")
+            ui.icon("campaign").classes("text-accent")
             ui.label("PPC Keyword Intelligence").classes("text-subtitle1 font-bold")
 
         ppc_container = ui.column().classes("w-full gap-3")
@@ -2492,7 +2421,7 @@ def _render_ppc_keywords(product, product_id, comp_data):
         with ui.row().classes("items-center gap-2"):
             ppc_btn = ui.button(
                 "Generate Keywords", icon="auto_awesome",
-            ).props("color=primary outline")
+            ).props("outlined color=primary")
             ppc_spinner = ui.spinner("dots", size="lg")
             ppc_spinner.set_visibility(False)
 
@@ -2627,7 +2556,7 @@ def _render_seasonal_forecast(product, product_id):
         with ui.row().classes("items-center gap-2"):
             forecast_btn = ui.button(
                 "Analyze Seasonality", icon="trending_up",
-            ).props("color=primary outline")
+            ).props("outlined color=primary")
             forecast_spinner = ui.spinner("dots", size="lg")
             forecast_spinner.set_visibility(False)
 

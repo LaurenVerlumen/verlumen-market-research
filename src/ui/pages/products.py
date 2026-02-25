@@ -25,6 +25,7 @@ from src.services.query_optimizer import optimize_query
 from src.ui.components.helpers import (
     avatar_color as _avatar_color, product_image_src as _product_image_src,
     format_price as _format_price, STATUS_COLORS as _STATUS_COLORS, STATUS_LABELS as _STATUS_LABELS,
+    page_header,
 )
 from src.ui.layout import build_layout
 
@@ -78,13 +79,10 @@ def products_page(
                 ).props("flat round size=sm")
                 ui.label(_active_cat_path).classes("text-h5 font-bold")
             ui.label(f"Products in {_active_cat_path}").classes(
-                "text-body2 text-secondary mb-2"
+                "text-body2 text-secondary"
             )
         else:
-            ui.label("Products").classes("text-h5 font-bold")
-            ui.label("Browse and manage your products.").classes(
-                "text-body2 text-secondary mb-2"
-            )
+            page_header("Products", subtitle="Browse and manage your products.", icon="inventory_2")
 
         # ===================================================================
         # Import from Excel section (merged from import_page.py)
@@ -756,7 +754,7 @@ def products_page(
                 ui.button(
                     "Deselect All", icon="deselect",
                     on_click=lambda: _bulk_deselect_all(),
-                ).props("flat dense color=grey size=sm")
+                ).props("flat dense color=secondary size=sm")
                 ui.space()
                 _bulk_mp_options = {d: info["label"] for d, info in AMAZON_MARKETPLACES.items()}
                 bulk_marketplace_select = ui.select(

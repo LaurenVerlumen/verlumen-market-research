@@ -174,6 +174,12 @@ def _migrate_columns():
                 conn.execute(text(
                     "ALTER TABLE products ADD COLUMN decision_log TEXT DEFAULT '[]'"
                 ))
+        if "profitability_data" not in columns:
+            logger.info("Adding profitability_data column to products table")
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "ALTER TABLE products ADD COLUMN profitability_data TEXT"
+                ))
     if "amazon_competitors" in inspector.get_table_names():
         columns = {col["name"] for col in inspector.get_columns("amazon_competitors")}
         if "match_score" not in columns:

@@ -7,7 +7,7 @@ from src.services.demand_estimator import estimate_demand
 from src.services.excel_exporter import ExcelExporter
 from src.services.pdf_exporter import export_pdf
 from src.services.excel_importer import parse_excel
-from src.services.fee_calculator import calculate_fees
+from src.services.fee_calculator import calculate_fees, calculate_detailed_profitability
 from src.services.image_fetcher import ImageFetcher, download_image, save_uploaded_image
 from src.services.match_scorer import score_matches
 from src.services.price_recommender import recommend_pricing
@@ -42,6 +42,7 @@ __all__ = [
     "estimate_demand",
     "calculate_profit",
     "calculate_fees",
+    "calculate_detailed_profitability",
     "calculate_vvs",
     "classify_seller",
     "compute_brand_concentration",

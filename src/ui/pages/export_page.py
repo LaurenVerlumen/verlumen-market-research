@@ -8,6 +8,7 @@ from sqlalchemy.orm import joinedload
 from config import EXPORTS_DIR
 from src.models import get_session, Product, Category, SearchSession, AmazonCompetitor
 from src.services import ExcelExporter, CompetitionAnalyzer, export_pdf
+from src.ui.components.helpers import page_header, section_header, INPUT_PROPS
 from src.ui.layout import build_layout
 
 
@@ -16,8 +17,7 @@ def export_page():
     content = build_layout()
 
     with content:
-        ui.label("Export Results").classes("text-h5 font-bold")
-        ui.label("Download enriched research data as Excel.").classes("text-body2 text-secondary mb-2")
+        page_header("Export Results", subtitle="Download enriched research data as Excel.", icon="file_download")
 
         session = get_session()
         try:
@@ -41,8 +41,8 @@ def export_page():
             ).props("color=primary")
             return
 
-        with ui.card().classes("w-full p-4"):
-            ui.label("Export Summary").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes("w-full p-5"):
+            section_header("Export Summary", icon="summarize")
             ui.label(f"Total products: {total_products}").classes("text-body2")
             ui.label(f"Products with research data: {researched}").classes("text-body2")
             unresearched = total_products - researched
@@ -86,8 +86,8 @@ def export_page():
             include_profit_cb.on_value_change(lambda _: _update_sheets_label())
 
         # --- Export Filters ---
-        with ui.card().classes("w-full p-4"):
-            ui.label("Export Filters").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes("w-full p-5"):
+            section_header("Export Filters", icon="filter_list")
             ui.label("Narrow down which products to include in the export.").classes(
                 "text-caption text-secondary mb-2"
             )
@@ -133,7 +133,7 @@ def export_page():
         filename_input = ui.input(
             label="Output filename",
             value=f"verlumen-research-{datetime.now().strftime('%Y%m%d-%H%M')}.xlsx",
-        ).classes("w-96 mt-4")
+        ).props(INPUT_PROPS).classes("w-96 mt-4")
 
         result_container = ui.column().classes("w-full")
 
@@ -333,15 +333,15 @@ def export_page():
 
         with ui.row().classes("gap-4 mt-4"):
             ui.button("Export to Excel", icon="download", on_click=do_export).props(
-                "color=positive size=lg"
+                "color=primary size=lg"
             )
             ui.button("Export to PDF", icon="picture_as_pdf", on_click=do_pdf_export).props(
-                "color=accent size=lg"
+                "outlined color=primary size=lg"
             )
 
         # Previous exports
         ui.separator().classes("my-4")
-        ui.label("Previous Exports").classes("text-subtitle1 font-bold mb-2")
+        section_header("Previous Exports", icon="folder_open")
 
         exports = sorted(
             list(EXPORTS_DIR.glob("*.xlsx")) + list(EXPORTS_DIR.glob("*.pdf")),

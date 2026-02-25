@@ -30,6 +30,7 @@ class Product(Base):
     amazon_search_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     decision_log: Mapped[str | None] = mapped_column(Text, nullable=True, default="[]")
+    profitability_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, default="imported")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(

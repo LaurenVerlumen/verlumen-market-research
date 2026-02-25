@@ -11,6 +11,7 @@ from src.services.market_events import get_all_recent_events
 from src.services.utils import parse_bought
 from src.services.viability_scorer import calculate_vvs
 from src.ui.layout import build_layout
+from src.ui.components.helpers import page_header, section_header, ACTION_COLORS
 from src.ui.components.stats_card import stats_card
 
 
@@ -40,8 +41,7 @@ def dashboard_page():
     content = build_layout()
 
     with content:
-        ui.label("Dashboard").classes("text-h5 font-bold")
-        ui.label("Market intelligence overview.").classes("text-body2 text-secondary")
+        page_header("Dashboard", subtitle="Market intelligence overview.", icon="dashboard")
 
         # ------------------------------------------------------------------
         # Gather stats
@@ -296,31 +296,32 @@ def dashboard_page():
         # Action Widgets row (top of dashboard)
         # ------------------------------------------------------------------
         with ui.row().classes("gap-4 flex-wrap w-full"):
+            _ac = ACTION_COLORS
             _action_widget(
                 label="Need Research",
                 count=need_research_count,
                 icon="search",
-                bg_color="#FFF3E0",
-                border_color="#FF9800",
-                text_color="#E65100",
+                bg_color=_ac["need_research"]["bg"],
+                border_color=_ac["need_research"]["border"],
+                text_color=_ac["need_research"]["text"],
                 href="/products?status=imported",
             )
             _action_widget(
                 label="Awaiting Review",
                 count=awaiting_review_count,
                 icon="rate_review",
-                bg_color="#E3F2FD",
-                border_color="#2196F3",
-                text_color="#0D47A1",
+                bg_color=_ac["awaiting_review"]["bg"],
+                border_color=_ac["awaiting_review"]["border"],
+                text_color=_ac["awaiting_review"]["text"],
                 href="/products?status=researched",
             )
             _action_widget(
                 label="Approved",
                 count=approved_count,
                 icon="check_circle",
-                bg_color="#E8F5E9",
-                border_color="#4CAF50",
-                text_color="#1B5E20",
+                bg_color=_ac["approved"]["bg"],
+                border_color=_ac["approved"]["border"],
+                text_color=_ac["approved"]["text"],
                 href="/products?status=approved",
             )
 
@@ -343,7 +344,7 @@ def dashboard_page():
         if has_research:
             with ui.row().classes("w-full gap-4 flex-wrap"):
                 # --- Price Distribution Chart ---
-                with ui.card().classes("flex-1 min-w-[400px] p-4"):
+                with ui.card().classes("flex-1 min-w-[400px] p-5"):
                     bucket_counts = {b: 0 for b in _BUCKET_ORDER}
                     for p in prices:
                         bucket_counts[_price_bucket(p)] += 1
@@ -368,7 +369,7 @@ def dashboard_page():
 
                 # --- Category Comparison Chart ---
                 if cat_stats:
-                    with ui.card().classes("flex-1 min-w-[400px] p-4"):
+                    with ui.card().classes("flex-1 min-w-[400px] p-5"):
                         cat_names = [row[0] for row in cat_stats]
                         avg_prices = [round(row[2], 2) if row[2] else 0 for row in cat_stats]
                         avg_ratings = [round(row[3], 1) if row[3] else 0 for row in cat_stats]
@@ -401,8 +402,8 @@ def dashboard_page():
         # Top Opportunities table (or Getting Started tips)
         # ------------------------------------------------------------------
         if has_research and top_products:
-            with ui.card().classes("w-full p-4"):
-                ui.label("Top Opportunities").classes("text-subtitle1 font-bold mb-2")
+            with ui.card().classes("w-full p-5"):
+                section_header("Top Opportunities", icon="emoji_events")
                 columns = [
                     {"name": "product", "label": "Product", "field": "product", "align": "left"},
                     {"name": "category", "label": "Category", "field": "category", "align": "left"},
@@ -427,8 +428,8 @@ def dashboard_page():
                 ).classes("w-full")
         else:
             # Quick-start tips when no research data exists
-            with ui.card().classes("w-full p-4"):
-                ui.label("Getting Started").classes("text-subtitle1 font-bold mb-2")
+            with ui.card().classes("w-full p-5"):
+                section_header("Getting Started", icon="rocket_launch")
                 with ui.column().classes("gap-1"):
                     ui.label("1. Go to Import Data to upload your Verlumen Excel spreadsheet.").classes("text-body2")
                     ui.label("2. Review imported products on the Products page.").classes("text-body2")
@@ -440,8 +441,8 @@ def dashboard_page():
         # Category Performance table (enhanced with VVS)
         # ------------------------------------------------------------------
         if has_research and cat_stats:
-            with ui.card().classes("w-full p-4"):
-                ui.label("Category Performance").classes("text-subtitle1 font-bold mb-2")
+            with ui.card().classes("w-full p-5"):
+                section_header("Category Performance", icon="leaderboard")
                 cat_columns = [
                     {"name": "category", "label": "Category", "field": "category", "align": "left"},
                     {"name": "avg_price", "label": "Avg Price", "field": "avg_price", "align": "right"},
@@ -502,8 +503,8 @@ def dashboard_page():
         # Activity Feed (replaces old Recent Searches)
         # ------------------------------------------------------------------
         if activities:
-            with ui.card().classes("w-full p-4"):
-                ui.label("Recent Activity").classes("text-subtitle1 font-bold mb-2")
+            with ui.card().classes("w-full p-5"):
+                section_header("Recent Activity", icon="history")
                 with ui.column().classes("gap-0 w-full"):
                     for i, act in enumerate(activities):
                         with ui.row().classes(
@@ -540,8 +541,8 @@ def dashboard_page():
             "competitor_exit": {"icon": "logout", "color": "#9E9E9E", "label": "Competitor Exit"},
         }
 
-        with ui.card().classes("w-full p-4"):
-            ui.label("Market Events").classes("text-subtitle1 font-bold mb-2")
+        with ui.card().classes("w-full p-5"):
+            section_header("Market Events", icon="campaign")
             if market_events:
                 with ui.column().classes("gap-0 w-full"):
                     for i, ev in enumerate(market_events):
