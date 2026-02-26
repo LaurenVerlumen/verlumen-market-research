@@ -160,33 +160,35 @@ def _render_sync_section():
     import asyncio
     from src.services.db_backup import get_last_backup_time, sync_to_git, get_git_sync_status
 
-    sync_status = get_git_sync_status()
-    last_backup = get_last_backup_time()
-
     with ui.column().classes("w-full px-4 gap-2"):
-        # Last backup time
-        if last_backup:
-            time_str = last_backup.strftime("%H:%M")
-            ui.label(f"Last backup: {time_str}").classes(
-                "text-caption text-grey-6"
-            )
-        else:
-            ui.label("No backup yet this session").classes(
-                "text-caption text-grey-6"
-            )
 
-        # Sync status indicator
-        if sync_status.get("needs_commit") or sync_status.get("needs_push"):
-            with ui.row().classes("items-center gap-1"):
-                ui.icon("circle", size="xs").classes("text-warning")
-                label = "Unsaved changes"
-                if sync_status.get("needs_push"):
-                    label = "Unpushed commits"
-                ui.label(label).classes("text-caption text-warning")
-        else:
-            with ui.row().classes("items-center gap-1"):
-                ui.icon("check_circle", size="xs").classes("text-positive")
-                ui.label("Synced").classes("text-caption text-positive")
+        # Refreshable status area
+        @ui.refreshable
+        def _sync_status_display():
+            sync_status = get_git_sync_status()
+            last_backup = get_last_backup_time()
+
+            # Last backup time
+            if last_backup:
+                time_str = last_backup.strftime("%H:%M")
+                ui.label(f"Last backup: {time_str}").classes(
+                    "text-caption text-grey-6"
+                )
+
+            # Sync status indicator
+            if sync_status.get("needs_commit") or sync_status.get("needs_push"):
+                with ui.row().classes("items-center gap-1"):
+                    ui.icon("circle", size="xs").classes("text-warning")
+                    label = "Unsaved changes"
+                    if sync_status.get("needs_push"):
+                        label = "Unpushed commits"
+                    ui.label(label).classes("text-caption text-warning")
+            else:
+                with ui.row().classes("items-center gap-1"):
+                    ui.icon("check_circle", size="xs").classes("text-positive")
+                    ui.label("Synced").classes("text-caption text-positive")
+
+        _sync_status_display()
 
         # Sync button
         sync_btn = ui.button("Sync to Git", icon="cloud_upload").props(
@@ -210,6 +212,8 @@ def _render_sync_section():
                 sync_label.classes(replace="text-caption text-center w-full text-negative")
                 ui.notify(result["message"], type="negative")
 
+            # Refresh status indicator after sync
+            _sync_status_display.refresh()
             sync_btn.enable()
 
         sync_btn.on_click(_do_sync)

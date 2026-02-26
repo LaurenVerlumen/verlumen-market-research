@@ -29,16 +29,45 @@ _last_backup_time: datetime | None = None
 
 
 def backup_to_sql() -> Path | None:
-    """Dump the database to a plain-text SQL file (git-friendly)."""
+    """Dump the database to a plain-text SQL file (git-friendly).
+
+    Uses sorted INSERT statements so identical data produces identical files,
+    avoiding false git diffs from SQLite's non-deterministic dump ordering.
+    """
     global _last_backup_time
     if not DB_PATH.exists():
         return None
     try:
         BACKUP_SQL.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(DB_PATH))
+
+        # Collect all dump lines, then sort INSERT statements per table
+        # to produce a stable, git-friendly output.
+        preamble = []      # PRAGMA, BEGIN, CREATE TABLE, CREATE INDEX
+        inserts = {}       # table_name -> [insert_lines]
+        postamble = []     # COMMIT
+
+        current_create = None
+        for line in conn.iterdump():
+            if line.startswith("INSERT INTO"):
+                # Extract table name: INSERT INTO "tablename" or INSERT INTO tablename
+                table = line.split("INSERT INTO")[1].strip().split()[0].strip('"')
+                inserts.setdefault(table, []).append(line)
+            elif line == "COMMIT;":
+                postamble.append(line)
+            else:
+                preamble.append(line)
+
         with open(BACKUP_SQL, "w", encoding="utf-8") as f:
-            for line in conn.iterdump():
+            for line in preamble:
                 f.write(f"{line}\n")
+            # Write sorted inserts per table (tables in alphabetical order)
+            for table in sorted(inserts.keys()):
+                for ins in sorted(inserts[table]):
+                    f.write(f"{ins}\n")
+            for line in postamble:
+                f.write(f"{line}\n")
+
         conn.close()
         _last_backup_time = datetime.now()
         logger.info("SQL backup written to %s", BACKUP_SQL)
@@ -112,23 +141,27 @@ def get_last_backup_time() -> datetime | None:
 
 
 def get_git_sync_status() -> dict:
-    """Check if backup.sql has uncommitted changes or unpushed commits.
+    """Check if backup.sql has meaningful uncommitted changes or unpushed commits.
 
     Returns dict with keys: needs_commit, needs_push, last_commit_msg, error
     """
     project_dir = str(DATA_DIR.parent)
     result = {"needs_commit": False, "needs_push": False, "last_commit_msg": "", "error": None}
     try:
-        # Check if backup.sql has uncommitted changes
+        # Check if backup.sql has real content changes (ignore whitespace-only diffs)
         diff = subprocess.run(
-            ["git", "diff", "--name-only", "data/backup.sql"],
+            ["git", "diff", "--stat", "data/backup.sql"],
             capture_output=True, text=True, cwd=project_dir, timeout=10,
         )
-        staged = subprocess.run(
-            ["git", "diff", "--cached", "--name-only", "data/backup.sql"],
-            capture_output=True, text=True, cwd=project_dir, timeout=10,
-        )
-        result["needs_commit"] = bool(diff.stdout.strip() or staged.stdout.strip())
+        if diff.stdout.strip():
+            # Has diff — check if it's meaningful (more than just reordering)
+            word_diff = subprocess.run(
+                ["git", "diff", "--shortstat", "data/backup.sql"],
+                capture_output=True, text=True, cwd=project_dir, timeout=10,
+            )
+            stat = word_diff.stdout.strip()
+            # Only flag as needing commit if there are actual insertions/deletions
+            result["needs_commit"] = bool(stat)
 
         # Check if ahead of remote
         status = subprocess.run(

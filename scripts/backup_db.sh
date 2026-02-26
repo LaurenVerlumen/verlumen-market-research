@@ -1,5 +1,7 @@
 #!/bin/bash
-# Dump SQLite database to a text SQL file for git tracking.
+# Dump SQLite database to a sorted SQL text file for git tracking.
+# Uses Python backup_to_sql() for deterministic (sorted) output so
+# identical data always produces the same file (no false git diffs).
 # Usage: bash scripts/backup_db.sh
 # Called automatically by the pre-commit hook.
 
@@ -13,7 +15,17 @@ if [ ! -f "$DB_PATH" ]; then
     exit 0
 fi
 
-sqlite3 "$DB_PATH" .dump > "$BACKUP_PATH"
+# Use the Python sorted backup (deterministic output, no false diffs)
+cd "$PROJECT_DIR"
+if [ -f "venv/Scripts/python.exe" ]; then
+    PYTHON="venv/Scripts/python.exe"
+elif [ -f "venv/bin/python" ]; then
+    PYTHON="venv/bin/python"
+else
+    PYTHON="python"
+fi
+
+$PYTHON -c "from src.services.db_backup import backup_to_sql; backup_to_sql()"
 
 if [ $? -eq 0 ]; then
     echo "Database backed up to $BACKUP_PATH"
