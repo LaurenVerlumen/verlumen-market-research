@@ -81,12 +81,12 @@ def product_detail_page(product_id: int):
 
                 def _show_delete_dialog():
                     with ui.dialog() as dlg, ui.card():
-                        ui.label(f'Delete "{product.name}"?').classes(
+                        ui.label(f'Move "{product.name}" to Recycle Bin?').classes(
                             "text-subtitle1 font-bold"
                         )
                         ui.label(
-                            "Are you sure you want to delete this product? "
-                            "This will also delete all associated Amazon research data."
+                            "The product will be moved to the Recycle Bin. "
+                            "You can restore it later or delete it permanently."
                         ).classes("text-body2 text-secondary")
                         with ui.row().classes("justify-end gap-2 mt-4"):
                             ui.button("Cancel", on_click=dlg.close).props("flat")
@@ -98,14 +98,14 @@ def product_detail_page(product_id: int):
                                         Product.id == product_id
                                     ).first()
                                     if p:
-                                        db.delete(p)
+                                        p.status = "deleted"
                                         db.commit()
                                 finally:
                                     db.close()
                                 dlg.close()
                                 ui.navigate.to("/products")
 
-                            ui.button("Delete", on_click=_confirm).props(
+                            ui.button("Move to Bin", on_click=_confirm).props(
                                 "color=negative"
                             )
                     dlg.open()

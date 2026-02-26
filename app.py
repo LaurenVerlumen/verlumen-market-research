@@ -8,6 +8,7 @@ from src.ui.pages.dashboard import dashboard_page
 from src.ui.pages.products import products_page
 from src.ui.pages.product_detail import product_detail_page
 from src.ui.pages.export_page import export_page
+from src.ui.pages.recycle_bin import recycle_bin_page
 from src.ui.pages.settings import settings_page
 
 # Restore DB from backup if missing, then create a fresh backup
@@ -46,6 +47,11 @@ def product_detail_view(product_id: int):
 @ui.page("/export")
 def export_view():
     export_page()
+
+
+@ui.page("/recycle-bin")
+def recycle_bin_view():
+    recycle_bin_page()
 
 
 @ui.page("/settings")

@@ -565,12 +565,13 @@ def products_page(
             # --- Filter row ---
             with ui.row().classes("w-full items-center gap-4 flex-wrap"):
                 # Build hierarchical category options with product counts
-                _total_products = session.query(Product).count()
+                _total_products = session.query(Product).filter(Product.status != "deleted").count()
                 _cat_options = {"all": f"All Categories ({_total_products})"}
 
-                # Product counts per category
+                # Product counts per category (exclude deleted)
                 _cat_prod_counts = dict(
                     session.query(Product.category_id, func.count(Product.id))
+                    .filter(Product.status != "deleted")
                     .group_by(Product.category_id)
                     .all()
                 )
@@ -649,6 +650,7 @@ def products_page(
                     missing = (
                         db.query(Product)
                         .filter(Product.local_image_path.is_(None))
+                        .filter(Product.status != "deleted")
                         .all()
                     )
                     product_list = [{"id": p.id, "name": p.name} for p in missing]
@@ -716,7 +718,7 @@ def products_page(
 
                 db = get_session()
                 try:
-                    all_products = db.query(Product).all()
+                    all_products = db.query(Product).filter(Product.status != "deleted").all()
                     product_list = [
                         {"id": p.id, "name": p.name, "product_id": p.alibaba_product_id}
                         for p in all_products
@@ -1258,7 +1260,7 @@ def products_page(
                 query = db.query(Product).options(
                     joinedload(Product.category),
                     joinedload(Product.search_sessions),
-                )
+                ).filter(Product.status != "deleted")
 
                 # Category filter (hierarchical - includes descendant products)
                 if filter_select.value != "all":
@@ -1493,7 +1495,7 @@ def products_page(
                 product_container.clear()
                 db = get_session()
                 try:
-                    total_count = db.query(Product).count()
+                    total_count = db.query(Product).filter(Product.status != "deleted").count()
                     comp_counts = _get_comp_counts(db)
                     all_filtered = _get_filtered_products(db, comp_counts)
                     filtered_count = len(all_filtered)
@@ -1622,14 +1624,14 @@ def products_page(
 
 
 def _delete_button(product_id: int, product_name: str, on_deleted):
-    """Render a delete icon button with confirmation dialog."""
+    """Render a delete icon button with confirmation dialog (soft-delete to recycle bin)."""
 
     def show_confirm():
         with ui.dialog() as dialog, ui.card():
-            ui.label(f'Delete "{product_name}"?').classes("text-subtitle1 font-bold")
+            ui.label(f'Move "{product_name}" to Recycle Bin?').classes("text-subtitle1 font-bold")
             ui.label(
-                "Are you sure you want to delete this product? "
-                "This will also delete all associated Amazon research data."
+                "The product will be moved to the Recycle Bin. "
+                "You can restore it later or delete it permanently."
             ).classes("text-body2 text-secondary")
             with ui.row().classes("justify-end gap-2 mt-4"):
                 ui.button("Cancel", on_click=dialog.close).props("flat")
@@ -1639,14 +1641,14 @@ def _delete_button(product_id: int, product_name: str, on_deleted):
                     try:
                         prod = db.query(Product).filter(Product.id == product_id).first()
                         if prod:
-                            db.delete(prod)
+                            prod.status = "deleted"
                             db.commit()
                     finally:
                         db.close()
                     dialog.close()
                     on_deleted()
 
-                ui.button("Delete", on_click=confirm_delete).props("color=negative")
+                ui.button("Move to Bin", on_click=confirm_delete).props("color=negative")
         dialog.open()
 
     ui.button(icon="delete", on_click=show_confirm).props(

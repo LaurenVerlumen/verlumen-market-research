@@ -21,7 +21,7 @@ def export_page():
 
         session = get_session()
         try:
-            total_products = session.query(Product).count()
+            total_products = session.query(Product).filter(Product.status != "deleted").count()
             researched = (
                 session.query(Product.id)
                 .join(SearchSession)
@@ -144,6 +144,7 @@ def export_page():
                 query = (
                     session.query(Product)
                     .options(joinedload(Product.category))
+                    .filter(Product.status != "deleted")
                 )
 
                 # Apply export filters (hierarchical - includes descendants)

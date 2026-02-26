@@ -58,6 +58,7 @@ STATUS_COLORS = {
     "under_review": "warning",
     "approved": "positive",
     "rejected": "negative",
+    "deleted": "grey-7",
 }
 STATUS_LABELS = {
     "imported": "Imported",
@@ -65,6 +66,7 @@ STATUS_LABELS = {
     "under_review": "Under Review",
     "approved": "Approved",
     "rejected": "Rejected",
+    "deleted": "Deleted",
 }
 
 
@@ -119,7 +121,8 @@ def product_image_src(product) -> str | None:
         product.get("local_image_path") if isinstance(product, dict) else None
     )
     if local:
-        return f"/images/{local}"
+        import time
+        return f"/images/{local}?t={int(time.time())}"
     remote = getattr(product, "alibaba_image_url", None) or (
         product.get("alibaba_image_url") if isinstance(product, dict) else None
     )

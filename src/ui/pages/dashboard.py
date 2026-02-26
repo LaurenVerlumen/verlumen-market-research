@@ -49,7 +49,7 @@ def dashboard_page():
         session = get_session()
         try:
             cat_count = session.query(Category).count()
-            product_count = session.query(Product).count()
+            product_count = session.query(Product).filter(Product.status != "deleted").count()
             competitor_count = session.query(AmazonCompetitor).count()
             search_count = session.query(SearchSession).count()
 

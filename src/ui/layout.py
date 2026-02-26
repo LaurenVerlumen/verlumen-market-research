@@ -107,6 +107,28 @@ def build_layout(title: str = "Verlumen Market Research"):
         _nav_categories_refreshable = _category_nav
 
         _nav_link("Export", "file_download", "/export")
+
+        # Recycle Bin with deleted product count
+        @ui.refreshable
+        def _recycle_bin_nav():
+            from src.models import Product as _P
+            _db = get_session()
+            try:
+                _del_count = _db.query(_P).filter(_P.status == "deleted").count()
+            finally:
+                _db.close()
+            with ui.link(target="/recycle-bin").classes("no-underline w-full"):
+                with ui.row().classes(
+                    "items-center gap-3 px-4 py-2 rounded-lg w-full "
+                    f"{HOVER_BG} cursor-pointer"
+                ):
+                    ui.icon("delete_sweep").classes("text-secondary")
+                    ui.label("Recycle Bin").classes("text-body1 text-secondary flex-1")
+                    if _del_count > 0:
+                        ui.badge(str(_del_count), color="negative").props("rounded dense")
+
+        _recycle_bin_nav()
+
         _nav_link("Settings", "settings", "/settings")
 
     # Highlight active sidebar nav link after page loads
@@ -136,9 +158,10 @@ def _load_category_tree() -> list[dict]:
     from src.models import Product
     db = get_session()
     try:
-        # Single query for all product counts
+        # Single query for all product counts (exclude deleted)
         count_rows = (
             db.query(Product.category_id, func.count(Product.id))
+            .filter(Product.status != "deleted")
             .group_by(Product.category_id)
             .all()
         )

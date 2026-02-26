@@ -52,6 +52,7 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 - **Tabbed Product Detail** - 4 focused tabs: Overview, Competitors, Analysis, History
 - **Decision Log** - Timestamped entries per product, auto-logs status changes, manual notes
 - **Saved Filter Presets** - Name and save filter combos, 4 built-in presets + custom
+- **Recycle Bin** - Soft-delete products to a recoverable bin; restore or permanently delete anytime
 
 ### Competitor Analysis
 - **Trend Tracking** - Compare research snapshots, price/rating trend arrows, NEW/GONE badges, ECharts timeline
@@ -73,7 +74,9 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 - **PDF Reports** - Branded Verlumen PDF with cover page, KPI summary, product tables, per-product competitor detail
 - **Previous Exports** - Browse and re-download past exports
 
-### Operations
+### Data Safety & Operations
+- **Auto DB Backup** - SQL text dump on every app startup + git pre-commit hook; auto-restore on new machines
+- **Rolling Backups** - Timestamped local DB copies (last 5) for quick recovery
 - **Scheduled Research** - APScheduler with daily/weekly/monthly auto-research, configurable in Settings
 - **Docker Ready** - Dockerfile + docker-compose.yml for one-command deployment
 - **Health Endpoint** - `/_health` for monitoring
@@ -109,6 +112,8 @@ Or just **double-click `start.bat`** on Windows.
 
 Open your browser to **http://localhost:8080**
 
+> **New machine?** The app auto-restores the database from `data/backup.sql` on first launch. You can also run `bash scripts/restore_db.sh` manually.
+
 ### Docker
 
 ```bash
@@ -121,7 +126,8 @@ docker-compose up -d
 2. **Products** - Import Excel, browse by category (hierarchical filter with counts), use filter presets
 3. **Research** - Select products, choose marketplace, run competition research
 4. **Product Detail** - Review competitors across 4 tabs, approve/reject products, add notes
-5. **Export** - Download enriched Excel or branded PDF report
+5. **Recycle Bin** - Recover deleted products or permanently remove them
+6. **Export** - Download enriched Excel or branded PDF report
 
 ## Tech Stack
 
@@ -149,11 +155,12 @@ verlumenMarketResearch/
 ├── public/images/            # Verlumen logos
 ├── src/
 │   ├── models/               # SQLAlchemy models (6 tables)
-│   ├── services/             # Business logic & ML (23 services)
+│   ├── services/             # Business logic & ML (24 services)
 │   │   ├── amazon_search     # SerpAPI wrapper (multi-marketplace)
 │   │   ├── match_scorer      # Semantic scoring (sentence-transformers)
 │   │   ├── trend_tracker     # Competitor trend comparison
 │   │   ├── category_helpers   # Hierarchical search context resolution
+│   │   ├── db_backup         # Auto SQL dump, rolling backups, restore
 │   │   ├── scheduler         # APScheduler background research
 │   │   ├── pdf_exporter      # Branded PDF report generation
 │   │   ├── excel_exporter    # 6-sheet Excel with charts
@@ -165,9 +172,10 @@ verlumenMarketResearch/
 │   │   └── ...               # Query optimizer, image fetcher, etc.
 │   └── ui/                   # NiceGUI pages & components
 │       ├── layout.py         # Header with global search, sidebar nav
-│       ├── pages/            # 5 app pages
+│       ├── pages/            # 6 app pages (incl. Recycle Bin)
 │       └── components/       # Reusable UI widgets
-└── data/                     # SQLite DB + exports
+├── scripts/                  # Backup & restore scripts
+└── data/                     # SQLite DB + backup.sql + exports
 ```
 
 ## Completed Phases
@@ -213,6 +221,19 @@ Excel import, SerpAPI search, competition scoring, product dashboard, export sys
 - Smart sidebar nav: only shows categories with products, clean indented tree
 - Pre-seeded Toys & Games tree with 20 Amazon subcategories + Baby Products
 - SQLite migration: safe table recreation for schema change, department mapping migration
+
+### Phase 7: Profitability & Polish
+- Profitability calculator persistence (save/load profit data per product)
+- Unit toggle (metric/imperial) for shipping dimensions
+- Competitor table column customization
+
+### Phase 8: Data Safety & Recycle Bin
+- Auto SQL dump on app startup + git pre-commit hook for database backup
+- Rolling timestamped DB backups (local, max 5)
+- Auto-restore from `backup.sql` when DB is missing (new machine setup)
+- Recycle Bin with soft-delete, restore, and permanent delete
+- Image upload override fix (cache-busting for browser-cached images)
+- Re-import rejected products (reset to imported instead of blocking)
 
 ## Roadmap: Phase 6 - Next-Gen Intelligence
 
