@@ -2,7 +2,7 @@
 from nicegui import app, ui
 
 from config import APP_TITLE, APP_PORT, APP_HOST, IMAGES_DIR
-from src.services.db_backup import startup_backup
+from src.services.db_backup import startup_backup, shutdown_backup, backup_to_sql
 from src.models import init_db
 from src.ui.pages.dashboard import dashboard_page
 from src.ui.pages.products import products_page
@@ -21,6 +21,19 @@ init_db()
 # Start background scheduler (if enabled in config)
 from src.services.scheduler import start_scheduler
 start_scheduler()
+
+# Backup DB on shutdown
+app.on_shutdown(shutdown_backup)
+
+# Periodic auto-backup every 30 minutes
+import asyncio
+
+async def _periodic_backup():
+    while True:
+        await asyncio.sleep(30 * 60)
+        backup_to_sql()
+
+app.on_startup(lambda: asyncio.create_task(_periodic_backup()))
 
 # Serve locally-saved product images
 app.add_static_files("/images", str(IMAGES_DIR))

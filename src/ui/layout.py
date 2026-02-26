@@ -133,6 +133,10 @@ def build_layout(title: str = "Verlumen Market Research"):
 
         _nav_link("Settings", "settings", "/settings")
 
+        # --- Git Sync section ---
+        ui.separator().classes("my-2")
+        _render_sync_section()
+
     # Highlight active sidebar nav link after page loads
     ui.timer(0.1, lambda: ui.run_javascript(_ACTIVE_NAV_JS), once=True)
 
@@ -149,6 +153,66 @@ def refresh_nav_categories():
             _nav_categories_refreshable.refresh()
         except Exception:
             pass
+
+
+def _render_sync_section():
+    """Render the Git Sync button and backup status at the bottom of the sidebar."""
+    import asyncio
+    from src.services.db_backup import get_last_backup_time, sync_to_git, get_git_sync_status
+
+    sync_status = get_git_sync_status()
+    last_backup = get_last_backup_time()
+
+    with ui.column().classes("w-full px-4 gap-2"):
+        # Last backup time
+        if last_backup:
+            time_str = last_backup.strftime("%H:%M")
+            ui.label(f"Last backup: {time_str}").classes(
+                "text-caption text-grey-6"
+            )
+        else:
+            ui.label("No backup yet this session").classes(
+                "text-caption text-grey-6"
+            )
+
+        # Sync status indicator
+        if sync_status.get("needs_commit") or sync_status.get("needs_push"):
+            with ui.row().classes("items-center gap-1"):
+                ui.icon("circle", size="xs").classes("text-warning")
+                label = "Unsaved changes"
+                if sync_status.get("needs_push"):
+                    label = "Unpushed commits"
+                ui.label(label).classes("text-caption text-warning")
+        else:
+            with ui.row().classes("items-center gap-1"):
+                ui.icon("check_circle", size="xs").classes("text-positive")
+                ui.label("Synced").classes("text-caption text-positive")
+
+        # Sync button
+        sync_btn = ui.button("Sync to Git", icon="cloud_upload").props(
+            "color=primary outline dense size=sm"
+        ).classes("w-full")
+        sync_label = ui.label("").classes("text-caption text-center w-full")
+
+        async def _do_sync():
+            sync_btn.disable()
+            sync_label.text = "Syncing..."
+            sync_label.classes(replace="text-caption text-center w-full text-primary")
+
+            result = await asyncio.get_event_loop().run_in_executor(None, sync_to_git)
+
+            if result["success"]:
+                sync_label.text = result["message"]
+                sync_label.classes(replace="text-caption text-center w-full text-positive")
+                ui.notify(result["message"], type="positive")
+            else:
+                sync_label.text = result["message"]
+                sync_label.classes(replace="text-caption text-center w-full text-negative")
+                ui.notify(result["message"], type="negative")
+
+            sync_btn.enable()
+
+        sync_btn.on_click(_do_sync)
 
 
 def _load_category_tree() -> list[dict]:
