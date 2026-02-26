@@ -179,26 +179,23 @@ def _render_sync_section():
             if sync_status.get("needs_commit") or sync_status.get("needs_push"):
                 with ui.row().classes("items-center gap-1"):
                     ui.icon("circle", size="xs").classes("text-warning")
-                    label = "Unsaved changes"
-                    if sync_status.get("needs_push"):
-                        label = "Unpushed commits"
-                    ui.label(label).classes("text-caption text-warning")
+                    ui.label("Unsaved changes").classes("text-caption text-warning")
             else:
                 with ui.row().classes("items-center gap-1"):
                     ui.icon("check_circle", size="xs").classes("text-positive")
-                    ui.label("Synced").classes("text-caption text-positive")
+                    ui.label("All saved").classes("text-caption text-positive")
 
         _sync_status_display()
 
         # Sync button
-        sync_btn = ui.button("Sync to Git", icon="cloud_upload").props(
+        sync_btn = ui.button("Save & Backup", icon="cloud_done").props(
             "color=primary outline dense size=sm"
         ).classes("w-full")
         sync_label = ui.label("").classes("text-caption text-center w-full")
 
         async def _do_sync():
             sync_btn.disable()
-            sync_label.text = "Syncing..."
+            sync_label.text = "Saving..."
             sync_label.classes(replace="text-caption text-center w-full text-primary")
 
             result = await asyncio.get_event_loop().run_in_executor(None, sync_to_git)

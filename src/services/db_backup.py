@@ -204,7 +204,7 @@ def sync_to_git() -> dict:
             capture_output=True, text=True, cwd=project_dir, timeout=10,
         )
         if not status.stdout.strip():
-            return {"success": True, "message": "Already up to date — nothing to sync."}
+            return {"success": True, "message": "Everything is saved — no new changes."}
 
         # 4. Commit
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -220,12 +220,12 @@ def sync_to_git() -> dict:
             capture_output=True, text=True, cwd=project_dir, timeout=60,
         )
         if push.returncode != 0:
-            return {"success": False, "message": f"Committed but push failed: {push.stderr.strip()}"}
+            return {"success": False, "message": f"Saved locally but cloud backup failed: {push.stderr.strip()}"}
 
         logger.info("Git sync complete: backup committed and pushed")
-        return {"success": True, "message": f"Synced to git at {stamp}"}
+        return {"success": True, "message": f"Saved & backed up at {stamp}"}
     except subprocess.CalledProcessError as e:
-        return {"success": False, "message": f"Git error: {e.stderr.strip() if e.stderr else str(e)}"}
+        return {"success": False, "message": f"Save failed: {e.stderr.strip() if e.stderr else str(e)}"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
