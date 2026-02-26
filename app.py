@@ -2,12 +2,16 @@
 from nicegui import app, ui
 
 from config import APP_TITLE, APP_PORT, APP_HOST, IMAGES_DIR
+from src.services.db_backup import startup_backup
 from src.models import init_db
 from src.ui.pages.dashboard import dashboard_page
 from src.ui.pages.products import products_page
 from src.ui.pages.product_detail import product_detail_page
 from src.ui.pages.export_page import export_page
 from src.ui.pages.settings import settings_page
+
+# Restore DB from backup if missing, then create a fresh backup
+startup_backup()
 
 # Initialize database tables on startup
 init_db()

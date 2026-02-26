@@ -112,7 +112,19 @@ def products_page(
                             existing = session.query(Product).filter(
                                 Product.alibaba_url == prod["url"]
                             ).first()
-                            if existing:
+                            if existing and existing.status == "rejected":
+                                # Re-import rejected product
+                                existing.name = prod["name"]
+                                existing.category_id = category.id
+                                existing.status = "imported"
+                                existing.amazon_search_query = prod["name"]
+                                existing.alibaba_product_id = prod.get("product_id")
+                                existing.alibaba_supplier = prod.get("supplier")
+                                existing.decision_log = "[]"
+                                imported_names.append(prod["name"])
+                                total_products += 1
+                                continue
+                            elif existing:
                                 skipped_names.append(prod["name"])
                                 continue
 
@@ -278,7 +290,10 @@ def products_page(
                         existing = db.query(Product).filter(
                             Product.alibaba_url == info["clean_url"]
                         ).first()
-                        if existing:
+                        if existing and existing.status == "rejected":
+                            feedback_label.text = f"Previously rejected — will re-import: {existing.name}"
+                            feedback_label.classes(add="text-info")
+                        elif existing:
                             feedback_label.text = f"Product already exists: {existing.name}"
                             feedback_label.classes(add="text-warning")
                     finally:
@@ -315,7 +330,9 @@ def products_page(
                     existing = db.query(Product).filter(
                         Product.alibaba_url == info["clean_url"]
                     ).first()
-                    if existing:
+
+                    # If it exists and is NOT rejected, block
+                    if existing and existing.status != "rejected":
                         feedback_label.text = f"Product already exists: {existing.name}"
                         feedback_label.classes(add="text-warning")
                         return
@@ -336,17 +353,27 @@ def products_page(
                         feedback_label.classes(add="text-negative")
                         return
 
-                    product = Product(
-                        category_id=cat_id,
-                        alibaba_url=info["clean_url"],
-                        alibaba_product_id=info.get("product_id"),
-                        name=name,
-                        amazon_search_query=name,
-                    )
-                    db.add(product)
-                    db.commit()
-
-                    feedback_label.text = f"Product added: {name}"
+                    if existing and existing.status == "rejected":
+                        # Re-import: reset the rejected product
+                        existing.name = name
+                        existing.category_id = cat_id
+                        existing.status = "imported"
+                        existing.amazon_search_query = name
+                        existing.alibaba_product_id = info.get("product_id")
+                        existing.decision_log = "[]"
+                        db.commit()
+                        feedback_label.text = f"Re-imported (was rejected): {name}"
+                    else:
+                        product = Product(
+                            category_id=cat_id,
+                            alibaba_url=info["clean_url"],
+                            alibaba_product_id=info.get("product_id"),
+                            name=name,
+                            amazon_search_query=name,
+                        )
+                        db.add(product)
+                        db.commit()
+                        feedback_label.text = f"Product added: {name}"
                     feedback_label.classes(add="text-positive")
                     url_input.value = ""
                     name_input.value = ""

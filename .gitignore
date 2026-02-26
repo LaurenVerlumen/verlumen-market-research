@@ -4,6 +4,7 @@ __pycache__/
 .env
 venv/
 data/verlumen.db
+data/backups/
 data/exports/
 data/images/
 data/schedule_config.json
