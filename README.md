@@ -68,6 +68,9 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 - **Price Recommender** - Budget/Competitive/Premium pricing strategies using K-means clustering
 - **Demand Estimator** - Parses "bought last month" data to estimate monthly revenue and market size
 - **Profit Calculator** - Full margin analysis with 2025-Q4 FBA fees: landed cost, Amazon fees, net profit, ROI%, break-even
+- **LLM Listing Autopsy** - Claude-powered competitive analysis: gaps, winning angles, missing claims, messaging framework
+- **Listing Quality Predictor** - GradientBoosting model predicts monthly sales from listing attributes (scikit-learn)
+- **Cross-Marketplace Gap** - Compare products across 8 marketplaces: price arbitrage, whitespace detection, overlap matrix
 
 ### Export & Reports
 - **Excel Export** - 6-sheet report with Executive Summary, embedded charts, competitor data, profit analysis, AI recommendations
@@ -120,14 +123,83 @@ Open your browser to **http://localhost:8080**
 docker-compose up -d
 ```
 
+## Deploying on a New Computer
+
+Follow these steps to get the full app running with all your data on any machine.
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/LaurenVerlumen/verlumen-market-research.git
+cd verlumen-market-research
+```
+
+### 2. Set up Python environment
+
+```bash
+python -m venv venv
+venv\Scripts\activate        # Windows
+# source venv/bin/activate   # macOS/Linux
+pip install -r requirements.txt
+```
+
+### 3. Configure API keys
+
+Create a `.env` file in the project root:
+```
+SERPAPI_KEY=your_serpapi_key_here
+ANTHROPIC_API_KEY=your_anthropic_key_here  # optional, for AI features
+```
+
+Or paste them in the Settings page after launching the app.
+
+### 4. Restore the database
+
+The database restores **automatically** on first launch. The app detects that `data/verlumen.db` is missing and rebuilds it from `data/backup.sql` (which is tracked in git).
+
+If you prefer to restore manually:
+```bash
+bash scripts/restore_db.sh
+```
+
+### 5. Launch
+
+```bash
+python app.py
+```
+
+Open **http://localhost:8080** — all your products, categories, competitors, and research data will be there.
+
+### Keeping data in sync across machines
+
+The database is backed up as a plain-text SQL file (`data/backup.sql`) that is tracked in git. To keep machines in sync:
+
+1. **Before leaving a machine**: commit and push
+   ```bash
+   git add -A && git commit -m "Data sync" && git push
+   ```
+   The pre-commit hook automatically dumps a fresh `data/backup.sql`.
+
+2. **On the other machine**: pull and restart
+   ```bash
+   git pull
+   # Delete the old DB so it gets rebuilt from the latest backup:
+   rm data/verlumen.db
+   python app.py
+   ```
+   The app auto-restores from the updated `backup.sql`.
+
+> **Important**: Do not run the app on two machines simultaneously — SQLite is single-writer. Always commit+push from one machine before pulling on another.
+
 ## Usage
 
-1. **Settings** - Paste your SerpAPI key, manage category tree, configure scheduled research
+1. **Settings** - Paste your SerpAPI key (+ optional Anthropic key for AI features), manage category tree, configure scheduled research
 2. **Products** - Import Excel, browse by category (hierarchical filter with counts), use filter presets
 3. **Research** - Select products, choose marketplace, run competition research
-4. **Product Detail** - Review competitors across 4 tabs, approve/reject products, add notes
-5. **Recycle Bin** - Recover deleted products or permanently remove them
-6. **Export** - Download enriched Excel or branded PDF report
+4. **Product Detail** - Review competitors across 4 tabs, approve/reject products, run Listing Autopsy, train sales predictor
+5. **Marketplace Gap** - Compare products across multiple Amazon marketplaces, spot arbitrage
+6. **Recycle Bin** - Recover deleted products or permanently remove them
+7. **Export** - Download enriched Excel or branded PDF report
 
 ## Tech Stack
 
@@ -136,7 +208,7 @@ docker-compose up -d
 | Web UI | [NiceGUI](https://nicegui.io) 3.x (Python) |
 | Database | SQLite + SQLAlchemy 2.0 |
 | Amazon Data | [SerpAPI](https://serpapi.com) |
-| ML/AI | sentence-transformers, scikit-learn (TF-IDF, K-means) |
+| ML/AI | sentence-transformers, scikit-learn (TF-IDF, K-means, GradientBoosting), Claude API |
 | Charts | ECharts via NiceGUI |
 | Excel | openpyxl + pandas |
 | PDF | fpdf2 |
@@ -155,12 +227,15 @@ verlumenMarketResearch/
 ├── public/images/            # Verlumen logos
 ├── src/
 │   ├── models/               # SQLAlchemy models (6 tables)
-│   ├── services/             # Business logic & ML (24 services)
-│   │   ├── amazon_search     # SerpAPI wrapper (multi-marketplace)
+│   ├── services/             # Business logic & ML (27 services)
+│   │   ├── amazon_search     # SerpAPI wrapper (multi-marketplace, rate-limited)
 │   │   ├── match_scorer      # Semantic scoring (sentence-transformers)
 │   │   ├── trend_tracker     # Competitor trend comparison
 │   │   ├── category_helpers   # Hierarchical search context resolution
 │   │   ├── db_backup         # Auto SQL dump, rolling backups, restore
+│   │   ├── listing_analyzer  # LLM Listing Autopsy (Claude API)
+│   │   ├── listing_predictor # Sales prediction (GradientBoosting)
+│   │   ├── marketplace_gap   # Cross-marketplace gap analysis
 │   │   ├── scheduler         # APScheduler background research
 │   │   ├── pdf_exporter      # Branded PDF report generation
 │   │   ├── excel_exporter    # 6-sheet Excel with charts
@@ -172,7 +247,7 @@ verlumenMarketResearch/
 │   │   └── ...               # Query optimizer, image fetcher, etc.
 │   └── ui/                   # NiceGUI pages & components
 │       ├── layout.py         # Header with global search, sidebar nav
-│       ├── pages/            # 6 app pages (incl. Recycle Bin)
+│       ├── pages/            # 8 app pages
 │       └── components/       # Reusable UI widgets
 ├── scripts/                  # Backup & restore scripts
 └── data/                     # SQLite DB + backup.sql + exports
@@ -235,20 +310,21 @@ Excel import, SerpAPI search, competition scoring, product dashboard, export sys
 - Image upload override fix (cache-busting for browser-cached images)
 - Re-import rejected products (reset to imported instead of blocking)
 
-## Roadmap: Phase 6 - Next-Gen Intelligence
+### Phase 9: Advanced Intelligence & Codebase Health
+- **LLM Listing Autopsy** - Claude-powered competitive analysis: gaps, winning angles, missing claims, messaging framework
+- **Listing Quality Predictor** - GradientBoosting ML model trained on competitor data to predict monthly sales from listing attributes
+- **Cross-Marketplace Gap Analyzer** - New page comparing products across 8 Amazon marketplaces with price arbitrage alerts (>30% diff), whitespace detection, competitor overlap matrix, opportunity scores, ECharts price charts
+- **P0 Codebase Health**: N+1 query fix (selectinload), DB indexes (status+created_at, position), SerpAPI rate limiting (semaphore + 1s spacing), `with_db()` session context manager
 
-| Sprint | Feature | Description |
-|--------|---------|-------------|
-| 1 | **AI Go-to-Market Brief** | Claude-powered 1-page brief per product: launch price, listing angles, risk flags, 90-day plan |
-| 1 | **Brand Moat Detector** | Classify sellers (Amazon 1P / private label / established brand), add as 6th VVS dimension |
-| 1 | **Review Velocity Monitor** | Alert on competitor launch surges, decline signals, market events |
-| 2 | **Review NLP Pain Map** | Aspect-based sentiment mining: cluster complaints → product improvement opportunities |
-| 2 | **Seasonal Forecasting** | Google Trends + BSR history → Prophet model → optimal launch window recommendations |
-| 2 | **PPC Keyword Intelligence** | Reverse-ASIN keywords from top competitors → auto-generated campaign seeds |
-| 3 | **LLM Listing Autopsy** | "Why is this beating me?" — structured competitive analysis of bullet points, A+ content |
-| 3 | **Listing Quality Regression** | XGBoost model trained on own data → predict sales from listing attributes (data flywheel) |
-| 4 | **Image Differentiation** | CLIP-based visual analysis of competitor thumbnails → CTR differentiation opportunities |
-| 4 | **Cross-Marketplace Gap** | Diff products across 8 marketplaces → white-space expansion + pricing arbitrage |
+## Roadmap: Future
+
+| Feature | Description |
+|---------|-------------|
+| **Image Differentiation** | CLIP-based visual analysis of competitor thumbnails → CTR differentiation opportunities |
+| **In-memory pagination → SQL** | Move search/status/count filters to database level |
+| **VVS caching** | Store VVS score in DB, recompute only on new research |
+| **Module splitting** | Break up products.py (1700+ lines) and product_detail.py (2400+ lines) |
+| **Test suite** | Currently 0/10 — add pytest coverage for services and models |
 
 See **[PROJECT_PLAN.md](PROJECT_PLAN.md)** for the full detailed plan.
 
