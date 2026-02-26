@@ -22,6 +22,7 @@ from src.services.xray_importer import XrayImporter
 from src.services.review_miner import mine_reviews, get_review_analysis
 from src.services.season_forecaster import get_seasonal_data, forecast_demand
 from src.services.keyword_intel import extract_keywords, generate_ppc_campaign
+from src.services.listing_predictor import train as train_listing_model, predict as predict_listing, predict_batch as predict_listing_batch, get_model_info as get_listing_model_info
 
 __all__ = [
     "parse_alibaba_url",
@@ -57,4 +58,8 @@ __all__ = [
     "forecast_demand",
     "extract_keywords",
     "generate_ppc_campaign",
+    "train_listing_model",
+    "predict_listing",
+    "predict_listing_batch",
+    "get_listing_model_info",
 ]

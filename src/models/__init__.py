@@ -1,5 +1,5 @@
 """Database models package."""
-from src.models.database import Base, engine, SessionLocal, get_session, init_db
+from src.models.database import Base, engine, SessionLocal, get_session, with_db, init_db
 from src.models.category import Category
 from src.models.product import Product
 from src.models.search_session import SearchSession
@@ -12,6 +12,7 @@ __all__ = [
     "engine",
     "SessionLocal",
     "get_session",
+    "with_db",
     "init_db",
     "Category",
     "Product",

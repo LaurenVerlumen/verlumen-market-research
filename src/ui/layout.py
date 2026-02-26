@@ -3,6 +3,7 @@ from pathlib import Path
 
 from nicegui import app, ui
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 
 from src.models.database import get_session
 from src.models.category import Category
@@ -107,6 +108,7 @@ def build_layout(title: str = "Verlumen Market Research"):
         _nav_categories_refreshable = _category_nav
 
         _nav_link("Export", "file_download", "/export")
+        _nav_link("Marketplace Gap", "compare_arrows", "/marketplace-gap")
 
         # Recycle Bin with deleted product count
         @ui.refreshable
@@ -167,9 +169,10 @@ def _load_category_tree() -> list[dict]:
         )
         prod_counts = {cid: cnt for cid, cnt in count_rows}
 
-        # Load root categories
+        # Load root categories (eager-load the full tree to avoid N+1 queries)
         roots = (
             db.query(Category)
+            .options(selectinload(Category.children, recursion_depth=-1))
             .filter(Category.parent_id.is_(None))
             .order_by(Category.sort_order, Category.name)
             .all()

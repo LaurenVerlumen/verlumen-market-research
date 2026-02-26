@@ -27,8 +27,10 @@ from src.ui.components.helpers import (
 from src.services.viability_scorer import calculate_vvs
 from src.services.brand_moat import compute_brand_concentration
 from src.services.gtm_brief_generator import generate_gtm_brief
+from src.services.listing_analyzer import analyze_listings
 from src.services.trend_tracker import compute_trends
 from src.services.review_miner import mine_reviews, get_review_analysis
+from src.services.listing_predictor import train as _train_listing_model, predict_batch as _predict_batch, get_model_info as _get_model_info, FEATURE_NAMES as _PREDICTOR_FEATURES
 from src.ui.layout import build_layout
 from src.ui.components.stats_card import stats_card
 from src.ui.components.competitor_table import competitor_table
@@ -1530,9 +1532,17 @@ def _render_analysis_tab(product, latest_session):
         # --- AI Insights card ---
         _render_ai_insights(product, comps if comps else [])
 
+        # --- LLM Listing Autopsy ---
+        if comps:
+            _render_listing_autopsy(product, comp_data)
+
         # --- PPC Keyword Intelligence ---
         if comps:
             _render_ppc_keywords(product, product.id, comp_data)
+
+        # --- Listing Quality Predictor ---
+        if comps:
+            _render_listing_predictor(product, comps)
     finally:
         db.close()
 
@@ -2192,6 +2202,131 @@ def _render_ai_insights(product, competitors: list):
             ).classes("text-body2 text-secondary")
 
 
+def _render_listing_autopsy(product, comp_data: list[dict]):
+    """Render the LLM Listing Autopsy section with on-demand button."""
+    with ui.expansion(
+        "Listing Autopsy (AI)", icon="biotech",
+    ).classes("w-full mt-4").props("dense header-class='text-subtitle1 font-bold'"):
+
+        if not ANTHROPIC_API_KEY:
+            ui.label(
+                "Configure Anthropic API key in Settings to enable Listing Autopsy."
+            ).classes("text-body2 text-secondary italic")
+            return
+
+        autopsy_container = ui.column().classes("w-full gap-3")
+        autopsy_btn = ui.button(
+            "Run Listing Autopsy", icon="biotech",
+        ).props("outlined color=deep-purple")
+        autopsy_spinner = ui.spinner("dots", size="lg").classes("hidden")
+
+        async def _run_autopsy():
+            autopsy_btn.disable()
+            autopsy_spinner.classes(remove="hidden")
+
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, analyze_listings, product.name, comp_data,
+                )
+
+                autopsy_container.clear()
+                with autopsy_container:
+                    _render_autopsy_content(result)
+
+            except RuntimeError as exc:
+                ui.notify(str(exc), type="negative")
+            except Exception as exc:
+                logger.exception("Listing autopsy failed")
+                ui.notify(f"Listing Autopsy failed: {exc}", type="negative")
+            finally:
+                autopsy_btn.enable()
+                autopsy_spinner.classes(add="hidden")
+
+        autopsy_btn.on_click(_run_autopsy)
+
+
+def _render_autopsy_content(autopsy: dict):
+    """Render the structured Listing Autopsy results."""
+    _PRIORITY_COLORS = {"high": "red", "medium": "orange", "low": "blue"}
+
+    # Messaging Framework
+    if autopsy.get("messaging_framework"):
+        with ui.card().classes("w-full bg-deep-purple-50 p-4"):
+            ui.label("Messaging Framework").classes(
+                "text-subtitle2 font-bold text-deep-purple-9"
+            )
+            ui.label(autopsy["messaging_framework"]).classes("text-body2 mt-1")
+
+    # Gaps
+    gaps = autopsy.get("gaps")
+    if gaps:
+        with ui.card().classes("w-full p-4"):
+            ui.label("Market Gaps & Opportunities").classes("text-subtitle2 font-bold")
+            for gap_item in gaps:
+                if isinstance(gap_item, dict):
+                    priority = gap_item.get("priority", "medium")
+                    color = _PRIORITY_COLORS.get(priority, "grey")
+                    with ui.row().classes("items-start gap-2 w-full py-1"):
+                        ui.badge(priority.upper(), color=color).props("rounded")
+                        with ui.column().classes("gap-0 flex-1"):
+                            ui.label(gap_item.get("gap", "")).classes(
+                                "text-body2 font-medium"
+                            )
+                            if gap_item.get("evidence"):
+                                ui.label(gap_item["evidence"]).classes(
+                                    "text-caption text-secondary"
+                                )
+                else:
+                    with ui.row().classes("items-start gap-2"):
+                        ui.icon("arrow_right", color="deep-purple").style(
+                            "font-size: 18px; margin-top: 2px"
+                        )
+                        ui.label(str(gap_item)).classes("text-body2")
+
+    with ui.row().classes("w-full gap-4 items-start"):
+        # Winning Angles
+        angles = autopsy.get("winning_angles")
+        if angles:
+            with ui.card().classes("flex-1 p-4 bg-green-50"):
+                ui.label("Winning Angles").classes(
+                    "text-subtitle2 font-bold text-green-9"
+                )
+                for angle_item in angles:
+                    if isinstance(angle_item, dict):
+                        with ui.row().classes("items-start gap-2 w-full py-1"):
+                            ui.icon("emoji_objects", color="green").style(
+                                "font-size: 18px; margin-top: 2px"
+                            )
+                            with ui.column().classes("gap-0 flex-1"):
+                                ui.label(angle_item.get("angle", "")).classes(
+                                    "text-body2 font-medium"
+                                )
+                                if angle_item.get("rationale"):
+                                    ui.label(angle_item["rationale"]).classes(
+                                        "text-caption text-secondary"
+                                    )
+                    else:
+                        with ui.row().classes("items-start gap-2"):
+                            ui.icon("emoji_objects", color="green").style(
+                                "font-size: 18px; margin-top: 2px"
+                            )
+                            ui.label(str(angle_item)).classes("text-body2")
+
+        # Missing Claims
+        claims = autopsy.get("missing_claims")
+        if claims:
+            with ui.card().classes("flex-1 p-4 bg-amber-50"):
+                ui.label("Missing Claims (Your Opening)").classes(
+                    "text-subtitle2 font-bold text-amber-9"
+                )
+                for claim in claims:
+                    with ui.row().classes("items-start gap-2 py-1"):
+                        ui.icon("new_releases", color="amber-9").style(
+                            "font-size: 18px; margin-top: 2px"
+                        )
+                        ui.label(str(claim)).classes("text-body2")
+
+
 def _info_row(label: str, value: str, is_link: bool = False):
     ui.label(label).classes("text-caption text-secondary font-medium")
     if is_link:
@@ -2684,3 +2819,295 @@ def _render_forecast_content(result: dict):
             }],
             "grid": {"left": 60, "right": 20, "bottom": 60, "top": 30},
         }).classes("w-full").style("height: 200px")
+
+
+# ====================================================================
+# Listing Quality Predictor
+# ====================================================================
+
+def _render_listing_predictor(product, comps):
+    """Render the Listing Quality Predictor card in the Analysis tab."""
+    with ui.card().classes("w-full p-5 mt-4"):
+        with ui.row().classes("items-center gap-2 mb-3"):
+            ui.icon("model_training").classes("text-accent")
+            ui.label("Listing Quality Predictor").classes("text-subtitle1 font-bold")
+            ui.badge("ML", color="purple").props("dense outline")
+
+        # Containers for dynamic content
+        metrics_container = ui.column().classes("w-full gap-3")
+        chart_container = ui.column().classes("w-full")
+        predictions_container = ui.column().classes("w-full gap-3")
+
+        # Check for existing model
+        model_info = _get_model_info()
+        if model_info:
+            with metrics_container:
+                ui.label(
+                    f"Model last trained: {model_info['trained_at']}"
+                ).classes("text-caption text-secondary")
+
+        async def on_train():
+            train_btn.set_visibility(False)
+            train_spinner.set_visibility(True)
+            train_status.set_text("Training model on all competitor data...")
+            train_status.set_visibility(True)
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, _train_listing_model
+                )
+                train_spinner.set_visibility(False)
+
+                if result["status"] == "insufficient_data":
+                    train_status.set_text(result["message"])
+                    train_btn.set_visibility(True)
+                    ui.notify(result["message"], type="warning")
+                    return
+
+                train_status.set_text(
+                    f"Model trained on {result['sample_size']} samples"
+                )
+                ui.notify("Model trained successfully!", type="positive")
+
+                # Render metrics
+                metrics_container.clear()
+                with metrics_container:
+                    with ui.row().classes("gap-4 flex-wrap"):
+                        stats_card(
+                            "R-squared", f"{result['r2']:.3f}",
+                            "analytics", "primary",
+                        )
+                        stats_card(
+                            "Mean Abs. Error", f"{result['mae']:.0f} units",
+                            "straighten", "warning",
+                        )
+                        stats_card(
+                            "Training Samples", f"{result['sample_size']:,}",
+                            "database", "positive",
+                        )
+
+                # Render feature importance chart
+                chart_container.clear()
+                with chart_container:
+                    fi = result.get("feature_importance", {})
+                    if fi:
+                        _render_feature_importance(fi)
+
+                # Enable predict button
+                predict_btn.set_visibility(True)
+
+            except Exception as exc:
+                train_spinner.set_visibility(False)
+                train_status.set_text(f"Error: {exc}")
+                train_btn.set_visibility(True)
+
+        async def on_predict():
+            predict_btn.set_visibility(False)
+            predict_spinner.set_visibility(True)
+            predict_status.set_text("Predicting sales for competitors...")
+            predict_status.set_visibility(True)
+            try:
+                comp_dicts = []
+                for c in comps:
+                    comp_dicts.append({
+                        "title": c.title,
+                        "price": c.price,
+                        "rating": c.rating,
+                        "review_count": c.review_count,
+                        "position": c.position,
+                        "match_score": c.match_score,
+                        "badge": c.badge,
+                        "is_prime": c.is_prime,
+                        "asin": c.asin,
+                        "bought_last_month": c.bought_last_month,
+                    })
+
+                results = await asyncio.get_event_loop().run_in_executor(
+                    None, _predict_batch, comp_dicts
+                )
+                predict_spinner.set_visibility(False)
+                predict_status.set_visibility(False)
+
+                predictions_container.clear()
+                with predictions_container:
+                    _render_predictions_table(results)
+
+                predict_btn.set_visibility(True)
+
+            except Exception as exc:
+                predict_spinner.set_visibility(False)
+                predict_status.set_text(f"Error: {exc}")
+                predict_btn.set_visibility(True)
+
+        # Action buttons
+        with ui.row().classes("items-center gap-4"):
+            train_btn = ui.button(
+                "Train Model", icon="model_training", on_click=on_train,
+            ).props("color=accent")
+            train_spinner = ui.spinner("dots", size="lg")
+            train_spinner.set_visibility(False)
+            train_status = ui.label("")
+            train_status.set_visibility(False)
+
+        with ui.row().classes("items-center gap-4"):
+            predict_btn = ui.button(
+                "Predict Sales", icon="auto_graph", on_click=on_predict,
+            ).props("color=primary outline")
+            predict_btn.set_visibility(model_info is not None)
+            predict_spinner = ui.spinner("dots", size="lg")
+            predict_spinner.set_visibility(False)
+            predict_status = ui.label("")
+            predict_status.set_visibility(False)
+
+
+def _render_feature_importance(fi: dict):
+    """Render a horizontal bar chart showing feature importance."""
+    section_header("Feature Importance", icon="bar_chart")
+
+    # Sort by importance descending
+    sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)
+    labels = [_format_feature_name(k) for k, _ in sorted_fi]
+    values = [round(v * 100, 1) for _, v in sorted_fi]
+
+    ui.echart({
+        "tooltip": {
+            "trigger": "axis",
+            "axisPointer": {"type": "shadow"},
+            "formatter": "{b}: {c}%",
+        },
+        "xAxis": {
+            "type": "value",
+            "name": "Importance (%)",
+            "max": max(values) * 1.2 if values else 100,
+        },
+        "yAxis": {
+            "type": "category",
+            "data": list(reversed(labels)),
+            "axisLabel": {"fontSize": 11},
+        },
+        "series": [{
+            "type": "bar",
+            "data": list(reversed(values)),
+            "barWidth": "60%",
+            "itemStyle": {
+                "color": {
+                    "type": "linear",
+                    "x": 0, "y": 0, "x2": 1, "y2": 0,
+                    "colorStops": [
+                        {"offset": 0, "color": "#A08968"},
+                        {"offset": 1, "color": "#68839E"},
+                    ],
+                },
+                "borderRadius": [0, 4, 4, 0],
+            },
+            "label": {
+                "show": True,
+                "position": "right",
+                "formatter": "{c}%",
+                "fontSize": 11,
+            },
+        }],
+        "grid": {"left": 130, "right": 60, "top": 10, "bottom": 30},
+    }).classes("w-full").style("height: 300px")
+
+
+def _format_feature_name(name: str) -> str:
+    """Convert feature_name to human-readable label."""
+    labels = {
+        "title_length": "Title Length",
+        "price": "Price",
+        "rating": "Rating",
+        "review_count": "Review Count",
+        "position": "Position",
+        "match_score": "Match Score",
+        "is_prime": "Prime",
+        "is_amazons_choice": "Amazon's Choice",
+        "is_best_seller": "Best Seller",
+    }
+    return labels.get(name, name.replace("_", " ").title())
+
+
+def _render_predictions_table(results: list[dict]):
+    """Render the predictions table comparing actual vs predicted sales."""
+    section_header("Sales Predictions", icon="auto_graph")
+
+    from src.services.utils import parse_bought
+
+    table_rows = []
+    for r in results:
+        actual = parse_bought(r.get("bought_last_month"))
+        predicted = r.get("predicted_sales")
+        title = (r.get("title") or "")[:60]
+        asin = r.get("asin") or ""
+        price = r.get("price")
+
+        row = {
+            "asin": asin,
+            "title": title if title else asin,
+            "price_raw": price,
+            "actual_raw": actual if actual is not None else -1,
+            "predicted_raw": predicted if predicted is not None else 0,
+        }
+        if actual is not None and actual > 0 and predicted is not None:
+            row["diff_raw"] = predicted - actual
+        else:
+            row["diff_raw"] = None
+        table_rows.append(row)
+
+    # Sort by predicted sales descending
+    table_rows.sort(key=lambda r: r["predicted_raw"], reverse=True)
+
+    columns = [
+        {"name": "title", "label": "Product", "field": "title", "align": "left", "sortable": True},
+        {"name": "price", "label": "Price", "field": "price_raw", "align": "right", "sortable": True},
+        {"name": "actual", "label": "Actual Sales", "field": "actual_raw", "align": "right", "sortable": True},
+        {"name": "predicted", "label": "Predicted Sales", "field": "predicted_raw", "align": "right", "sortable": True},
+        {"name": "diff", "label": "Diff", "field": "diff_raw", "align": "right", "sortable": True},
+    ]
+
+    pred_table = ui.table(
+        columns=columns,
+        rows=table_rows,
+        row_key="asin",
+        pagination={"rowsPerPage": 10, "sortBy": "predicted", "descending": True},
+    ).classes("w-full")
+    pred_table.props("flat bordered dense")
+
+    pred_table.add_slot('body-cell-price', r'''
+        <q-td :props="props">
+            <span v-if="props.row.price_raw != null">
+                ${{ props.row.price_raw.toFixed(2) }}
+            </span>
+            <span v-else style="color:#999">-</span>
+        </q-td>
+    ''')
+
+    pred_table.add_slot('body-cell-actual', r'''
+        <q-td :props="props">
+            <span v-if="props.row.actual_raw >= 0">
+                {{ props.row.actual_raw.toLocaleString() }}
+            </span>
+            <span v-else style="color:#999">N/A</span>
+        </q-td>
+    ''')
+
+    pred_table.add_slot('body-cell-predicted', r'''
+        <q-td :props="props">
+            <span style="font-weight:bold; color:#2E7D32">
+                {{ props.row.predicted_raw.toLocaleString() }}
+            </span>
+        </q-td>
+    ''')
+
+    pred_table.add_slot('body-cell-diff', r'''
+        <q-td :props="props">
+            <span v-if="props.row.diff_raw != null"
+                  :style="{
+                      color: props.row.diff_raw > 0 ? '#2E7D32' :
+                             props.row.diff_raw < 0 ? '#C62828' : '#666',
+                      fontWeight: 'bold'
+                  }">
+                {{ props.row.diff_raw > 0 ? '+' : '' }}{{ props.row.diff_raw.toLocaleString() }}
+            </span>
+            <span v-else style="color:#999">-</span>
+        </q-td>
+    ''')

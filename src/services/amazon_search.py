@@ -1,11 +1,20 @@
 """Amazon product search via SerpAPI."""
 import logging
+import threading
 import time
 from typing import Optional
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level rate limiter for SerpAPI requests.
+# Enforces max 2 concurrent requests and min 1 second between requests.
+# ---------------------------------------------------------------------------
+_rate_lock = threading.Lock()
+_rate_semaphore = threading.Semaphore(2)   # max 2 concurrent requests
+_last_request_time: float = 0.0
 
 
 class AmazonSearchError(Exception):
@@ -146,6 +155,17 @@ class AmazonSearchService:
     _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
     _NON_RETRYABLE_STATUS_CODES = {401, 403}
 
+    @staticmethod
+    def _wait_for_rate_limit():
+        """Block until the rate limit window allows a new request."""
+        global _last_request_time
+        with _rate_lock:
+            now = time.monotonic()
+            elapsed = now - _last_request_time
+            if elapsed < 1.0:
+                time.sleep(1.0 - elapsed)
+            _last_request_time = time.monotonic()
+
     def _fetch_single_page(
         self, query: str, page: int, department: str | None = None,
     ) -> dict:
@@ -163,7 +183,13 @@ class AmazonSearchService:
         last_exc = None
         for attempt in range(self._RETRY_MAX_ATTEMPTS):
             try:
-                resp = requests.get(self.SERPAPI_URL, params=params, timeout=30)
+                # Enforce rate limits: max 2 concurrent, min 1s spacing
+                _rate_semaphore.acquire()
+                try:
+                    self._wait_for_rate_limit()
+                    resp = requests.get(self.SERPAPI_URL, params=params, timeout=30)
+                finally:
+                    _rate_semaphore.release()
                 if resp.status_code in self._NON_RETRYABLE_STATUS_CODES:
                     raise AmazonSearchError(
                         f"SerpAPI auth error (HTTP {resp.status_code})"

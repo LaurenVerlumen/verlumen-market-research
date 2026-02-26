@@ -1,5 +1,6 @@
 """Database engine, session factory, and base model."""
 import logging
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
@@ -19,6 +20,23 @@ class Base(DeclarativeBase):
 def get_session():
     """Return a new database session."""
     return SessionLocal()
+
+
+@contextmanager
+def with_db():
+    """Context manager that yields a DB session and auto-closes it.
+
+    Usage::
+
+        with with_db() as db:
+            products = db.query(Product).all()
+        # session is closed automatically, even on exception
+    """
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def _migrate_categories_hierarchy():
@@ -293,13 +311,19 @@ def _migrate_columns():
 
 
 def _migrate_indexes():
-    """Create indexes on FK columns for existing databases."""
+    """Create indexes on FK and commonly-queried columns for existing databases."""
+    # Single-column indexes
     _indexes = [
         ("ix_products_category_id", "products", "category_id"),
         ("ix_amazon_competitors_product_id", "amazon_competitors", "product_id"),
         ("ix_amazon_competitors_search_session_id", "amazon_competitors", "search_session_id"),
+        ("ix_amazon_competitors_position", "amazon_competitors", "position"),
         ("ix_search_sessions_product_id", "search_sessions", "product_id"),
         ("ix_categories_parent_id", "categories", "parent_id"),
+    ]
+    # Composite indexes
+    _composite_indexes = [
+        ("ix_products_status_created_at", "products", "status, created_at"),
     ]
     inspector = inspect(engine)
     tables = inspector.get_table_names()
@@ -312,6 +336,15 @@ def _migrate_indexes():
                 logger.info("Creating index %s on %s.%s", idx_name, table, column)
                 conn.execute(text(
                     f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({column})"
+                ))
+        for idx_name, table, columns in _composite_indexes:
+            if table not in tables:
+                continue
+            existing = {idx["name"] for idx in inspector.get_indexes(table)}
+            if idx_name not in existing:
+                logger.info("Creating index %s on %s(%s)", idx_name, table, columns)
+                conn.execute(text(
+                    f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table} ({columns})"
                 ))
 
 

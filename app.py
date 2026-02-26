@@ -10,6 +10,7 @@ from src.ui.pages.product_detail import product_detail_page
 from src.ui.pages.export_page import export_page
 from src.ui.pages.recycle_bin import recycle_bin_page
 from src.ui.pages.settings import settings_page
+from src.ui.pages.marketplace_gap import marketplace_gap_page
 
 # Restore DB from backup if missing, then create a fresh backup
 startup_backup()
@@ -47,6 +48,11 @@ def product_detail_view(product_id: int):
 @ui.page("/export")
 def export_view():
     export_page()
+
+
+@ui.page("/marketplace-gap")
+def marketplace_gap_view():
+    marketplace_gap_page()
 
 
 @ui.page("/recycle-bin")
