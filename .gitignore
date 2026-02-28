@@ -7,7 +7,6 @@ data/verlumen.db
 data/*.joblib
 data/backups/
 data/exports/
-data/images/
 data/schedule_config.json
 *.egg-info/
 .vscode/

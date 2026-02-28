@@ -143,10 +143,23 @@ def get_last_backup_time() -> datetime | None:
 def get_git_sync_status() -> dict:
     """Check if backup.sql has meaningful uncommitted changes or unpushed commits.
 
-    Returns dict with keys: needs_commit, needs_push, last_commit_msg, error
+    Dumps a fresh backup.sql first so the diff reflects the current DB state.
+    Returns dict with keys:
+        needs_commit, needs_push, last_commit_msg, last_push_time,
+        remote_ok, error
     """
+    # Dump DB to backup.sql so the git diff is accurate
+    backup_to_sql()
+
     project_dir = str(DATA_DIR.parent)
-    result = {"needs_commit": False, "needs_push": False, "last_commit_msg": "", "error": None}
+    result = {
+        "needs_commit": False,
+        "needs_push": False,
+        "last_commit_msg": "",
+        "last_push_time": "",
+        "remote_ok": False,
+        "error": None,
+    }
     try:
         # Check if backup.sql has real content changes (ignore whitespace-only diffs)
         diff = subprocess.run(
@@ -170,12 +183,24 @@ def get_git_sync_status() -> dict:
         )
         result["needs_push"] = "ahead" in status.stdout
 
+        # Check if local and remote are in sync (remote_ok = pushed and even)
+        if not result["needs_commit"] and not result["needs_push"]:
+            result["remote_ok"] = True
+
         # Last commit message
         log = subprocess.run(
             ["git", "log", "-1", "--format=%s", "--", "data/backup.sql"],
             capture_output=True, text=True, cwd=project_dir, timeout=10,
         )
         result["last_commit_msg"] = log.stdout.strip()
+
+        # Last push time: when origin/master was last updated
+        push_time = subprocess.run(
+            ["git", "log", "-1", "--format=%ai", "origin/master", "--", "data/backup.sql"],
+            capture_output=True, text=True, cwd=project_dir, timeout=10,
+        )
+        if push_time.stdout.strip():
+            result["last_push_time"] = push_time.stdout.strip()
     except Exception as e:
         result["error"] = str(e)
     return result

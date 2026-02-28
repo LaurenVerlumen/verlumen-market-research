@@ -175,15 +175,37 @@ def _render_sync_section():
                     "text-caption text-grey-6"
                 )
 
-            # Sync status indicator
-            if sync_status.get("needs_commit") or sync_status.get("needs_push"):
+            # Sync status indicator — three states
+            if sync_status.get("needs_commit"):
+                # DB has changes not yet committed
                 with ui.row().classes("items-center gap-1"):
-                    ui.icon("circle", size="xs").classes("text-warning")
+                    ui.icon("edit", size="xs").classes("text-warning")
                     ui.label("Unsaved changes").classes("text-caption text-warning")
+            elif sync_status.get("needs_push"):
+                # Committed locally but not pushed to cloud
+                with ui.row().classes("items-center gap-1"):
+                    ui.icon("cloud_upload", size="xs").classes("text-info")
+                    ui.label("Saved locally, not in cloud").classes("text-caption text-info")
+            elif sync_status.get("remote_ok"):
+                # Everything committed and pushed
+                with ui.row().classes("items-center gap-1"):
+                    ui.icon("cloud_done", size="xs").classes("text-positive")
+                    ui.label("Synced to cloud").classes("text-caption text-positive")
+                # Show when last pushed
+                push_time = sync_status.get("last_push_time", "")
+                if push_time:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(push_time)
+                        ui.label(f"Last cloud sync: {dt.strftime('%b %d, %H:%M')}").classes(
+                            "text-caption text-grey-6"
+                        )
+                    except (ValueError, TypeError):
+                        pass
             else:
                 with ui.row().classes("items-center gap-1"):
-                    ui.icon("check_circle", size="xs").classes("text-positive")
-                    ui.label("All saved").classes("text-caption text-positive")
+                    ui.icon("help_outline", size="xs").classes("text-grey-6")
+                    ui.label("Sync status unknown").classes("text-caption text-grey-6")
 
         _sync_status_display()
 
