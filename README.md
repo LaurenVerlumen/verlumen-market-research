@@ -136,60 +136,80 @@ cd verlumen-market-research
 
 ### 2. Set up Python environment
 
+Requires **Python 3.11+**. Check with `python --version`.
+
 ```bash
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
+```
+
+Activate the virtual environment:
+```bash
+# Windows (Command Prompt)
+venv\Scripts\activate
+
+# Windows (Git Bash / MSYS2)
+source venv/Scripts/activate
+
+# macOS / Linux
+source venv/bin/activate
+```
+
+Install dependencies (this can take a few minutes due to torch/ML packages):
+```bash
 pip install -r requirements.txt
 ```
 
+> **Troubleshooting**: If `pip install` fails on `torch` or `sentence-transformers`, make sure you have Python 3.11 or 3.12 (not 3.13+, which may lack pre-built wheels for some ML packages). You can also try `pip install --upgrade pip` first.
+
 ### 3. Configure API keys
 
-Create a `.env` file in the project root:
+Copy the example and fill in your keys:
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set at minimum:
 ```
 SERPAPI_KEY=your_serpapi_key_here
-ANTHROPIC_API_KEY=your_anthropic_key_here  # optional, for AI features
 ```
 
-Or paste them in the Settings page after launching the app.
+The app will run without any API keys, but search and AI features need them. You can also paste keys in the **Settings** page after launching.
 
-### 4. Restore the database
-
-The database restores **automatically** on first launch. The app detects that `data/verlumen.db` is missing and rebuilds it from `data/backup.sql` (which is tracked in git).
-
-If you prefer to restore manually:
-```bash
-bash scripts/restore_db.sh
-```
-
-### 5. Launch
+### 4. Launch
 
 ```bash
 python app.py
 ```
 
+Or on Windows, just **double-click `start.bat`**.
+
 Open **http://localhost:8080** — all your products, categories, competitors, and research data will be there.
+
+> **Database auto-restore**: The database (`data/verlumen.db`) is gitignored. On first launch the app automatically rebuilds it from `data/backup.sql` (which IS tracked in git). No manual step needed.
 
 ### Keeping data in sync across machines
 
-The database is backed up as a plain-text SQL file (`data/backup.sql`) that is tracked in git. To keep machines in sync:
+The database is backed up as a plain-text SQL file (`data/backup.sql`) tracked in git.
 
-1. **Before leaving a machine**: commit and push
+**Easiest way**: Use the **Save & Backup** button in the app's Settings page — it dumps the DB, commits, and pushes in one click.
+
+**Manual sync**:
+
+1. **Before leaving a machine**: click Save & Backup, or:
    ```bash
    git add -A && git commit -m "Data sync" && git push
    ```
-   The pre-commit hook automatically dumps a fresh `data/backup.sql`.
 
-2. **On the other machine**: pull and restart
+2. **On the other machine**: pull and restart:
    ```bash
    git pull
    # Delete the old DB so it gets rebuilt from the latest backup:
-   rm data/verlumen.db
+   rm data/verlumen.db      # Linux/Mac/Git Bash
+   del data\verlumen.db     # Windows CMD
    python app.py
    ```
-   The app auto-restores from the updated `backup.sql`.
 
-> **Important**: Do not run the app on two machines simultaneously — SQLite is single-writer. Always commit+push from one machine before pulling on another.
+> **Important**: Do not run the app on two machines simultaneously — SQLite is single-writer. Always save & push from one machine before pulling on another.
 
 ## Usage
 
