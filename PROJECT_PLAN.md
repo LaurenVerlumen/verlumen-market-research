@@ -327,6 +327,24 @@ Backup: Auto SQL dump on startup + pre-commit hook + rolling .db copies
 
 ---
 
+---
+
+## Operational Notes (Feb 2026)
+
+### macOS Support (Confirmed)
+- Fully compatible with macOS Apple Silicon (arm64) and Python 3.13+
+- `torch 2.10.0` has a native `cp313-macosx_11_0_arm64` wheel — no workarounds needed
+- Use `./start.sh` on macOS (equivalent to `start.bat` on Windows)
+- For LAN access from other machines: `ipconfig getifaddr en0` → open `http://<IP>:8080`
+
+### Multi-Machine Sync
+- Primary dev machine: Windows (`start.bat`)
+- Secondary machine: macOS (`./start.sh`)
+- Sync via **Save & Backup** button in Settings → commits + pushes `data/backup.sql`
+- Never run both simultaneously — SQLite is single-writer
+
+---
+
 *Last updated: February 2026*
 *Project: Verlumen Market Research Tool*
 *Team: Verlumen Kids - Internal Tools*

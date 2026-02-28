@@ -94,9 +94,13 @@ An internal web tool for **Verlumen Kids** that automates the tedious process of
 ### Setup
 
 ```bash
-cd verlumenMarketResearch
+cd verlumen-market-research
 python -m venv venv
-venv\Scripts\activate        # Windows
+
+# Activate (choose your OS):
+source venv/bin/activate      # macOS / Linux
+venv\Scripts\activate         # Windows
+
 pip install -r requirements.txt
 ```
 
@@ -111,7 +115,9 @@ SERPAPI_KEY=your_serpapi_key_here
 python app.py
 ```
 
-Or just **double-click `start.bat`** on Windows.
+Or use the launcher script for your OS:
+- **macOS / Linux**: `./start.sh`
+- **Windows**: double-click `start.bat`
 
 Open your browser to **http://localhost:8080**
 
@@ -159,7 +165,7 @@ Install dependencies (this can take a few minutes due to torch/ML packages):
 pip install -r requirements.txt
 ```
 
-> **Troubleshooting**: If `pip install` fails on `torch` or `sentence-transformers`, make sure you have Python 3.11 or 3.12 (not 3.13+, which may lack pre-built wheels for some ML packages). You can also try `pip install --upgrade pip` first.
+> **Compatibility**: Python 3.11, 3.12, and 3.13 are all supported, including macOS Apple Silicon (arm64). All packages including `torch` have native arm64 wheels.
 
 ### 3. Configure API keys
 
@@ -181,7 +187,9 @@ The app will run without any API keys, but search and AI features need them. You
 python app.py
 ```
 
-Or on Windows, just **double-click `start.bat`**.
+Or use the launcher script for your OS:
+- **macOS / Linux**: `./start.sh`
+- **Windows**: double-click `start.bat`
 
 Open **http://localhost:8080** — all your products, categories, competitors, and research data will be there.
 
